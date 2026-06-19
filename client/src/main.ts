@@ -1,8 +1,9 @@
 import './style.css';
-import { GameState, ROUND_SECONDS } from './game/state';
+import { GameState, ROUND_SECONDS, SHIP_CLASSES } from './game/state';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './game/mapgen';
 import { render } from './game/render';
-import type { Island, Buildings } from './game/types';
+import { levelColor } from './game/palette';
+import type { Island, FishSource, Buildings, ShipClass } from './game/types';
 import * as api from './api';
 import type { AuthUser, Profile } from './api';
 
@@ -41,7 +42,7 @@ function buildingLabel(key: keyof Buildings): string {
   return { sawmill: 'Sawmill', mine: 'Mine', farm: 'Farm', shipyard: 'Shipyard' }[key];
 }
 
-function costText(cost: Partial<Record<'wood' | 'iron' | 'food', number>>): string {
+function costText(cost: Partial<Record<'wood' | 'iron' | 'food' | 'fur', number>>): string {
   return Object.entries(cost)
     .map(([k, v]) => `${Math.ceil(v as number)} ${k}`)
     .join(', ');
@@ -183,8 +184,9 @@ function renderSummary() {
       <div class="summary-grid">
         <div><span>Islands Allied</span><strong>${summary.islandsClaimed}</strong></div>
         <div><span>Ships Built</span><strong>${summary.shipsBuilt}</strong></div>
+        <div><span>Fur Gathered</span><strong>${summary.furGathered}</strong></div>
         <div><span>Gold Earned</span><strong>${summary.goldEarned}</strong></div>
-        <div><span>Final Score</span><strong>${summary.score}</strong></div>
+        <div class="summary-total"><span>Final Score</span><strong>${summary.score}</strong></div>
       </div>
       <p class="hint" id="submit-status">
         ${ctx.user ? (ctx.submitting ? 'Saving your voyage…' : 'Saved to your profile.') : 'Log in next time to save this score.'}
@@ -209,6 +211,9 @@ function renderSummary() {
 
 function startRound() {
   ctx.game = new GameState();
+  if (import.meta.env.DEV) {
+    (window as unknown as { __game: GameState }).__game = ctx.game;
+  }
   ctx.screen = 'playing';
   renderApp();
 }
@@ -234,9 +239,10 @@ function renderPlaying() {
   app.innerHTML = `
     <div class="screen play-screen">
       <div class="hud-top">
-        <div class="resource" title="Wood">🪵 <span id="res-wood">0</span></div>
-        <div class="resource" title="Iron">⛏️ <span id="res-iron">0</span></div>
-        <div class="resource" title="Food">🐟 <span id="res-food">0</span></div>
+        <div class="resource" title="Wood — from your sawmill">🪵 <span id="res-wood">0</span></div>
+        <div class="resource" title="Iron — from your mine">⛏️ <span id="res-iron">0</span></div>
+        <div class="resource" title="Food — from farms &amp; fishing">🐟 <span id="res-food">0</span></div>
+        <div class="resource" title="Fur — from the allied fur island">🦊 <span id="res-fur">0</span></div>
         <div class="timer" id="timer">3:00</div>
         <button class="btn ghost small" id="quit-btn">Quit</button>
       </div>
@@ -248,11 +254,11 @@ function renderPlaying() {
         <div class="panel build-panel" id="build-panel"></div>
         <div class="panel ship-panel" id="ship-panel">
           <div class="ship-panel-header">
-            <span>Fleet</span>
-            <button class="btn small primary" id="build-ship-btn">Build Ship</button>
+            <span id="fleet-label">Fleet</span>
           </div>
+          <div class="ship-build-row" id="ship-build-row"></div>
           <div class="ship-list" id="ship-list"></div>
-          <p class="hint" id="ship-hint">Select a docked ship, then click a neutral isle to sail.</p>
+          <p class="hint" id="ship-hint">Select a docked ship, then click a neutral isle or a fish shoal.</p>
         </div>
       </div>
     </div>
@@ -270,11 +276,9 @@ function renderPlaying() {
     ctx.screen = 'start';
     renderApp();
   });
-  document.querySelector('#build-ship-btn')?.addEventListener('click', () => {
-    if (ctx.game?.buildShip()) renderShipList();
-  });
 
   let hoveredIslandId: number | null = null;
+  let hoveredFishId: number | null = null;
 
   function toWorld(clientX: number, clientY: number) {
     const rect = canvas.getBoundingClientRect();
@@ -290,9 +294,18 @@ function renderPlaying() {
     return game.islands.find((isl) => Math.hypot(isl.x - x, isl.y - y) <= isl.radius + 8) ?? null;
   }
 
+  function fishAt(x: number, y: number): FishSource | null {
+    const game = ctx.game;
+    if (!game) return null;
+    return game.fishSources.find((f) => Math.hypot(f.x - x, f.y - y) <= f.radius) ?? null;
+  }
+
   canvas.addEventListener('mousemove', (e) => {
     const { x, y } = toWorld(e.clientX, e.clientY);
-    hoveredIslandId = islandAt(x, y)?.id ?? null;
+    const isl = islandAt(x, y);
+    hoveredIslandId = isl?.id ?? null;
+    hoveredFishId = isl ? null : fishAt(x, y)?.id ?? null;
+    canvas.style.cursor = isl || hoveredFishId !== null ? 'pointer' : 'default';
   });
 
   canvas.addEventListener('click', (e) => {
@@ -300,17 +313,35 @@ function renderPlaying() {
     if (!game) return;
     const { x, y } = toWorld(e.clientX, e.clientY);
     const island = islandAt(x, y);
-    if (!island) return;
 
-    if (island.isHome && island.owner === 'player') {
-      const idle = game.ships.find((s) => s.state === 'docked');
-      game.selectShip(idle ? idle.id : null);
+    if (island && island.isHome && island.owner === 'player') {
+      // cycle through docked ships
+      const docked = game.ships.filter((s) => s.state === 'docked');
+      if (docked.length === 0) {
+        updateShipHint('No docked ships — build one first.');
+        return;
+      }
+      const idx = docked.findIndex((s) => s.id === game.selectedShipId);
+      const next = docked[(idx + 1) % docked.length];
+      game.selectShip(next.id);
       updateShipHint();
+      renderShipList();
       return;
     }
-    if (island.owner === 'neutral' && game.selectedShipId !== null) {
-      const ok = game.sendSelectedShipTo(island.id);
+
+    if (game.selectedShipId === null) return;
+
+    if (island && island.owner === 'neutral') {
+      const ok = game.sendSelectedShip({ kind: 'island', id: island.id });
       updateShipHint(ok ? null : 'Could not start that voyage.');
+      renderShipList();
+      return;
+    }
+    const fish = fishAt(x, y);
+    if (fish) {
+      const ok = game.sendSelectedShip({ kind: 'fish', id: fish.id });
+      updateShipHint(ok ? 'Off to fish — food incoming.' : 'Could not start that voyage.');
+      renderShipList();
     }
   });
 
@@ -324,8 +355,8 @@ function renderPlaying() {
     const game = ctx.game;
     hint.textContent =
       game && game.selectedShipId !== null
-        ? 'Ship selected — click a neutral isle to sail.'
-        : 'Select a docked ship, then click a neutral isle to sail.';
+        ? 'Ship selected — click a neutral isle or fish shoal.'
+        : 'Click your home isle to pick a ship, then a neutral isle or shoal.';
   }
 
   const buildPanelEl = document.querySelector<HTMLDivElement>('#build-panel')!;
@@ -347,12 +378,41 @@ function renderPlaying() {
         const affordable = cost ? game.canAfford(cost) : false;
         return `
           <div class="build-row">
-            <span class="build-name">${buildingLabel(key)} <em>Lv ${level}</em></span>
+            <span class="build-name">
+              <span class="lvl-swatch" style="background:${levelColor(level)}"></span>
+              ${buildingLabel(key)} <em>Lv ${level}</em>
+            </span>
             <button class="btn small" data-key="${key}" ${!cost || !affordable ? 'disabled' : ''}>
               ${cost ? `Upgrade (${costText(cost)})` : 'Maxed'}
             </button>
           </div>
         `;
+      })
+      .join('');
+  }
+
+  const shipBuildRowEl = document.querySelector<HTMLDivElement>('#ship-build-row')!;
+  shipBuildRowEl.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-class]');
+    const game = ctx.game;
+    if (!btn || !game) return;
+    if (game.buildShip(btn.dataset.class as ShipClass)) {
+      renderShipList();
+    }
+  });
+
+  function renderShipBuildRow() {
+    const game = ctx.game;
+    if (!game) return;
+    shipBuildRowEl.innerHTML = (Object.keys(SHIP_CLASSES) as ShipClass[])
+      .map((key) => {
+        const def = SHIP_CLASSES[key];
+        const locked = game.buildings.shipyard < def.requiresShipyard;
+        const canBuild = game.canBuildShip(key);
+        const label = locked
+          ? `🔒 ${def.name} <em>Shipyard Lv${def.requiresShipyard}</em>`
+          : `${def.name} <em>${costText(def.cost)}</em>`;
+        return `<button class="ship-build-btn" data-class="${key}" ${canBuild ? '' : 'disabled'}>${label}</button>`;
       })
       .join('');
   }
@@ -369,25 +429,29 @@ function renderPlaying() {
 
   function renderShipList() {
     const game = ctx.game;
-    const buildBtn = document.querySelector<HTMLButtonElement>('#build-ship-btn');
     if (!game) return;
-    if (buildBtn) {
-      buildBtn.disabled = game.ships.length >= game.maxShips() || !game.canAfford({ wood: 25, iron: 15 });
+    const fleetLabel = document.querySelector('#fleet-label');
+    if (fleetLabel) fleetLabel.textContent = `Fleet ${game.ships.length}/${game.maxShips()}`;
+    renderShipBuildRow();
+    if (game.ships.length === 0) {
+      shipListEl.innerHTML = '<span class="hint">No ships yet — build one above.</span>';
+      return;
     }
     shipListEl.innerHTML = game.ships
       .map((s) => {
+        const name = SHIP_CLASSES[s.shipClass].name;
         const label =
           s.state === 'building'
             ? `Building (${Math.ceil(s.buildTimeLeft)}s)`
             : s.state === 'docked'
             ? 'Docked'
             : s.state === 'outbound'
-            ? 'Sailing out'
+            ? 'Sailing'
             : 'Returning';
         const selected = s.id === game.selectedShipId ? ' selected' : '';
         return `<button class="ship-chip${selected}" data-ship="${s.id}" ${
           s.state !== 'docked' ? 'disabled' : ''
-        }>⛵ ${label}</button>`;
+        }>⛵ ${name} · ${label}</button>`;
       })
       .join('');
   }
@@ -407,16 +471,18 @@ function renderPlaying() {
     if (!game || ctx.screen !== 'playing') return;
 
     game.tick(dt);
-    render(ctx2d, game, now / 1000, hoveredIslandId);
+    render(ctx2d, game, now / 1000, hoveredIslandId, hoveredFishId);
 
     const woodEl = document.querySelector('#res-wood');
     const ironEl = document.querySelector('#res-iron');
     const foodEl = document.querySelector('#res-food');
+    const furEl = document.querySelector('#res-fur');
     const timerEl = document.querySelector('#timer');
     const toastEl = document.querySelector<HTMLDivElement>('#toast');
     if (woodEl) woodEl.textContent = Math.floor(game.resources.wood).toString();
     if (ironEl) ironEl.textContent = Math.floor(game.resources.iron).toString();
     if (foodEl) foodEl.textContent = Math.floor(game.resources.food).toString();
+    if (furEl) furEl.textContent = Math.floor(game.resources.fur).toString();
     if (timerEl) {
       timerEl.textContent = fmtTime(game.timeLeft);
       timerEl.classList.toggle('urgent', game.timeLeft <= 20);

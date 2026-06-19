@@ -38,15 +38,22 @@ screen).
 
 ## How a round works
 
-- You start with a home island producing a trickle of Wood, Iron, and Food.
-- Upgrade the Sawmill, Mine, and Farm to increase production, and the
-  Shipyard to support more ships at once.
-- Build ships (cost Wood + Iron), then send them to neutral islands —
-  each successful voyage costs Food and adds goodwill; small islands need
-  one trip, larger ones need two or three before they ally with you.
-- Two rival lords are doing the same thing from their own islands — they
-  don't attack you, but they will out-ally you for nearby islands if you're
-  too slow.
-- The round ends after 3 minutes. Your score is based on islands allied,
-  ships built, and resources banked. If you're logged in, it's saved to
-  your profile and the leaderboard.
+- You start on a home island producing a trickle of Wood, Iron, and Food.
+  Each building's roof colour on the map reflects its level, so you can read
+  your town's development at a glance.
+- Upgrade the **Sawmill, Mine, and Farm** to raise production, and the
+  **Shipyard** to support more ships and unlock bigger hulls.
+- Build ships in three sizes — **Skiff** (cheap, fast, weak), **Galley**, and
+  **Galleon** (slow, expensive, allies a large isle in one trip). The
+  Shipyard level gates the larger classes.
+- Send a ship to a **neutral island** to build an alliance (small isles need
+  one visit, larger ones two or three; voyages cost Food), or to a **fish
+  shoal** in open water to net Food and bring it home.
+- The snowy **fur island** up north is a prize target: ally it and it yields
+  a steady stream of Fur, which is worth a lot of points.
+- Allied villages add to your production, so expanding pays off twice.
+- Two rival lords are doing the same from their own islands — they don't
+  attack you, but they will out-ally you for nearby isles if you're too slow.
+- The round ends after 3 minutes. Your score rewards islands allied, fur
+  gathered, ships built, and resources banked. If you're logged in, it's
+  saved to your profile and the leaderboard.
