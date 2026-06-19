@@ -1,15 +1,12 @@
 import type { GameState } from './state';
 import { SHIP_CLASSES } from './state';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './mapgen';
-import type { Island, Ship, FishSource } from './types';
+import type { Buildings, Island, Ship, FishSource } from './types';
 import { levelColor, PLAYER_COLOR, NEUTRAL_COLOR, RIVAL_COLORS } from './palette';
 
-const HOME_BUILDING_ORDER: ('sawmill' | 'mine' | 'farm' | 'shipyard')[] = [
-  'sawmill',
-  'mine',
-  'farm',
-  'shipyard',
-];
+type BuildingKind = 'house' | 'fishermen' | 'workshop' | 'market' | 'shipyard' | 'fortress';
+
+const HOME_BUILDING_ORDER: (keyof Buildings)[] = ['fishermen', 'workshop', 'market', 'shipyard', 'fortress'];
 
 const TERRAIN = {
   temperate: { shore: '#d8be84', land: '#69ab57', land2: '#558f48' },
@@ -130,28 +127,115 @@ function drawHouse(ctx: CanvasRenderingContext2D, x: number, y: number, scale: n
   ctx.restore();
 }
 
-function drawTent(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
-  const w = 9 * scale;
-  const h = 9 * scale;
+// One drawing routine for every home-island building, distinguished by
+// silhouette per kind so the build panel and the map read consistently.
+function drawBuilding(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  scale: number,
+  roof: string,
+  kind: BuildingKind
+) {
+  if (kind === 'house') {
+    drawHouse(ctx, x, y, scale, roof);
+    return;
+  }
+
+  const w = 7.5 * scale;
+  const h = 7 * scale;
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath();
-  ctx.ellipse(x, y + h * 0.32, w * 0.5, h * 0.16, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + h * 0.55, w * 0.62, h * 0.22, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x, y - h * 0.65);
-  ctx.lineTo(x - w * 0.5, y + h * 0.3);
-  ctx.lineTo(x + w * 0.5, y + h * 0.3);
-  ctx.closePath();
-  ctx.fillStyle = '#caa46a';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(60,40,20,0.5)';
-  ctx.lineWidth = 0.7;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x, y - h * 0.65);
-  ctx.lineTo(x, y + h * 0.3);
-  ctx.stroke();
+
+  if (kind === 'fortress') {
+    const tw = w * 0.9;
+    const th = h * 1.5;
+    ctx.fillStyle = '#9099a3';
+    ctx.strokeStyle = 'rgba(30,30,35,0.5)';
+    ctx.lineWidth = 0.6;
+    ctx.fillRect(x - tw / 2, y - th * 0.65, tw, th * 0.75);
+    ctx.strokeRect(x - tw / 2, y - th * 0.65, tw, th * 0.75);
+    const teeth = 4;
+    for (let i = 0; i < teeth; i++) {
+      const tx = x - tw / 2 + (i + 0.5) * (tw / teeth);
+      ctx.fillStyle = i % 2 === 0 ? roof : '#9099a3';
+      ctx.fillRect(tx - tw / (teeth * 2.6), y - th * 0.65 - th * 0.16, tw / (teeth * 1.3), th * 0.18);
+    }
+  } else if (kind === 'market') {
+    const stallW = w * 1.15;
+    ctx.fillStyle = '#cbb189';
+    ctx.fillRect(x - stallW / 2, y - h * 0.05, stallW, h * 0.45);
+    const stripes = 5;
+    for (let i = 0; i < stripes; i++) {
+      ctx.fillStyle = i % 2 === 0 ? roof : '#f4ecd8';
+      const sx = x - stallW / 2 + i * (stallW / stripes);
+      ctx.beginPath();
+      ctx.moveTo(sx, y - h * 0.05);
+      ctx.lineTo(sx + stallW / stripes, y - h * 0.05);
+      ctx.lineTo(sx + stallW / stripes, y - h * 0.32);
+      ctx.lineTo(sx, y - h * 0.32);
+      ctx.closePath();
+      ctx.fill();
+    }
+  } else if (kind === 'shipyard') {
+    ctx.strokeStyle = '#7a5a36';
+    ctx.lineWidth = 1.4 * scale;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.7, y + h * 0.3);
+    ctx.lineTo(x - w * 0.1, y - h * 0.75);
+    ctx.lineTo(x + w * 0.5, y + h * 0.3);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.45, y + h * 0.05);
+    ctx.lineTo(x + w * 0.25, y + h * 0.05);
+    ctx.stroke();
+    ctx.fillStyle = roof;
+    ctx.beginPath();
+    ctx.ellipse(x - w * 0.1, y + h * 0.32, w * 0.45, h * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (kind === 'fishermen') {
+    ctx.fillStyle = '#d8cdb0';
+    ctx.fillRect(x - w * 0.4, y - h * 0.05, w * 0.8, h * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.5, y);
+    ctx.lineTo(x, y - h * 0.6);
+    ctx.lineTo(x + w * 0.5, y);
+    ctx.closePath();
+    ctx.fillStyle = roof;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(230,240,245,0.7)';
+    ctx.lineWidth = 0.5;
+    const nx = x + w * 0.85;
+    const ny = y + h * 0.15;
+    const nr = h * 0.4;
+    ctx.strokeRect(nx - nr * 0.6, ny - nr, nr * 1.2, nr * 1.4);
+    for (let i = 1; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(nx - nr * 0.6, ny - nr + i * nr * 0.45);
+      ctx.lineTo(nx + nr * 0.6, ny - nr + i * nr * 0.45);
+      ctx.stroke();
+    }
+  } else {
+    // workshop — a house with a smoking chimney
+    ctx.fillStyle = '#efe6d2';
+    ctx.strokeStyle = 'rgba(40,30,20,0.4)';
+    ctx.lineWidth = 0.6;
+    ctx.fillRect(x - w / 2, y - h * 0.15, w, h * 0.6);
+    ctx.strokeRect(x - w / 2, y - h * 0.15, w, h * 0.6);
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.62, y - h * 0.1);
+    ctx.lineTo(x, y - h * 0.85);
+    ctx.lineTo(x + w * 0.62, y - h * 0.1);
+    ctx.closePath();
+    ctx.fillStyle = roof;
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#5b5048';
+    ctx.fillRect(x + w * 0.18, y - h * 1.05, w * 0.14, h * 0.3);
+  }
   ctx.restore();
 }
 
@@ -171,6 +255,29 @@ function drawAllianceRing(ctx: CanvasRenderingContext2D, island: Island) {
     ctx.arc(island.x, island.y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+const NEUTRAL_STOCK_CAP = 150;
+
+// A thin bar under wild, uninhabited islands showing the stockpile they've
+// been quietly generating (capped at 150) — capture or trade-route them to
+// bring it home.
+function drawStockBar(ctx: CanvasRenderingContext2D, island: Island) {
+  if (island.owner !== 'neutral' || island.stock <= 0) return;
+  const w = island.radius * 1.3;
+  const h = 4;
+  const x = island.x - w / 2;
+  const y = island.y + island.radius + 14;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(x, y, w, h);
+  const pct = Math.min(island.stock / NEUTRAL_STOCK_CAP, 1);
+  ctx.fillStyle = '#bfa15a';
+  ctx.fillRect(x, y, w * pct, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 0.6;
+  ctx.strokeRect(x, y, w, h);
   ctx.restore();
 }
 
@@ -219,16 +326,21 @@ function drawIsland(
   const snowy = island.terrain === 'snowy';
   const buildings = island.buildingSpots.map((s, i) => {
     let roof: string;
-    if (island.isHome && homeLevels) roof = levelColor(homeLevels[i] ?? 0);
-    else if (island.owner === 'neutral') roof = '#b5613f';
-    else roof = ownerColor(island);
-    return { x: island.x + s.dx, y: island.y + s.dy, scale: s.scale, roof, kind: 'building' as const };
+    let kind: BuildingKind = 'house';
+    if (island.isHome && homeLevels) {
+      roof = levelColor(homeLevels[i] ?? 0);
+      kind = HOME_BUILDING_ORDER[i] ?? 'house';
+    } else if (island.owner === 'neutral') {
+      roof = '#b5613f';
+    } else {
+      roof = ownerColor(island);
+    }
+    return { x: island.x + s.dx, y: island.y + s.dy, scale: s.scale, roof, kind };
   });
   const decor = [...trees, ...buildings].sort((a, b) => a.y - b.y);
   for (const d of decor) {
     if (d.kind === 'tree') drawTree(ctx, d.x, d.y, d.r, snowy);
-    else if (island.isFurIsland) drawTent(ctx, d.x, d.y, d.scale);
-    else drawHouse(ctx, d.x, d.y, d.scale, d.roof);
+    else drawBuilding(ctx, d.x, d.y, d.scale, d.roof, d.kind);
   }
 
   // home banner
@@ -251,6 +363,7 @@ function drawIsland(
   }
 
   drawAllianceRing(ctx, island);
+  drawStockBar(ctx, island);
 
   if (targetable) {
     ctx.save();
@@ -437,7 +550,7 @@ export function render(
   // draw islands back-to-front so overlaps look natural
   const ordered = [...state.islands].sort((a, b) => a.y - b.y);
   for (const island of ordered) {
-    const targetable = selecting && island.owner === 'neutral';
+    const targetable = selecting && !island.isHome && island.owner !== 'rival';
     drawIsland(ctx, island, island.id === hoveredIslandId, targetable, island.isHome ? homeLevels : null);
   }
 

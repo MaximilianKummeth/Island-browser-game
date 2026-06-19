@@ -38,20 +38,27 @@ screen).
 
 ## How a round works
 
-- You start on a home island producing a trickle of Wood, Iron, and Food.
+- You start on a home island producing a trickle of Wood, Stone, and Fish.
   Each building's roof colour on the map reflects its level, so you can read
   your town's development at a glance.
-- Upgrade the **Sawmill, Mine, and Farm** to raise production, and the
-  **Shipyard** to support more ships and unlock bigger hulls.
+- Five buildings to upgrade on your home isle: **Fishermen** (more Fish),
+  **Workshop** (boosts all local production), **Market** (trades surplus
+  for Coins), **Shipyard** — built right on the shore — (more ship slots,
+  unlocks bigger hulls), and **Fortress** (extra ship slots).
 - Build ships in three sizes — **Skiff** (cheap, fast, weak), **Galley**, and
-  **Galleon** (slow, expensive, allies a large isle in one trip). The
-  Shipyard level gates the larger classes.
-- Send a ship to a **neutral island** to build an alliance (small isles need
-  one visit, larger ones two or three; voyages cost Food), or to a **fish
-  shoal** in open water to net Food and bring it home.
-- The snowy **fur island** up north is a prize target: ally it and it yields
-  a steady stream of Fur, which is worth a lot of points.
-- Allied villages add to your production, so expanding pays off twice.
+  **Galleon** (slow, expensive, strong alliance pull). The Shipyard level
+  gates the larger classes. Ships always launch and dock just offshore —
+  never sitting on the island itself.
+- Send a ship to an island or **fish shoal** and it sets up a standing trade
+  route: it keeps sailing back and forth on its own, delivering goodwill (or
+  netting Fish) every lap, until you recall it. Voyages cost Fish to launch.
+- Small isles need one visit to ally, larger ones two or three. Wild,
+  unallied islands quietly stockpile up to 150 resources at 20/second —
+  capture one (or keep a trade route running to it) to bring that stockpile
+  home.
+- The snowy **fur island** up north is uninhabitable — no buildings ever
+  grow there — but ally it and it yields a steady stream of Fur, worth a lot
+  of points. Fur can only come from that island.
 - Two rival lords are doing the same from their own islands — they don't
   attack you, but they will out-ally you for nearby isles if you're too slow.
 - The round ends after 3 minutes. Your score rewards islands allied, fur

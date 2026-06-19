@@ -32,6 +32,8 @@ export interface Island {
   trees: Decor[];
   buildingSpots: BuildingSpot[];
   rivalId?: number;
+  /** Stockpile that uninhabited (neutral) islands accumulate on their own, capped at 150. */
+  stock: number;
 }
 
 export interface FishSource {
@@ -74,22 +76,26 @@ export interface Ship {
   progress: number;
   heading: number;
   target: ShipTarget | null;
-  cargoFood: number;
+  cargoFish: number;
   buildTimeLeft: number;
+  /** Set when the player recalls a ship — it sails home and docks instead of looping again. */
+  recalled: boolean;
 }
 
 export interface Buildings {
-  sawmill: number;
-  mine: number;
-  farm: number;
+  fishermen: number;
+  workshop: number;
+  market: number;
   shipyard: number;
+  fortress: number;
 }
 
 export interface Resources {
+  stone: number;
   wood: number;
-  iron: number;
-  food: number;
+  fish: number;
   fur: number;
+  coins: number;
 }
 
 export interface RunSummary {

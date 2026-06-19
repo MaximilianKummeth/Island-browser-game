@@ -39,10 +39,16 @@ function fmtTime(seconds: number): string {
 }
 
 function buildingLabel(key: keyof Buildings): string {
-  return { sawmill: 'Sawmill', mine: 'Mine', farm: 'Farm', shipyard: 'Shipyard' }[key];
+  return {
+    fishermen: 'Fishermen',
+    workshop: 'Workshop',
+    market: 'Market',
+    shipyard: 'Shipyard',
+    fortress: 'Fortress',
+  }[key];
 }
 
-function costText(cost: Partial<Record<'wood' | 'iron' | 'food' | 'fur', number>>): string {
+function costText(cost: Partial<Record<'wood' | 'stone' | 'fish' | 'fur' | 'coins', number>>): string {
   return Object.entries(cost)
     .map(([k, v]) => `${Math.ceil(v as number)} ${k}`)
     .join(', ');
@@ -239,10 +245,11 @@ function renderPlaying() {
   app.innerHTML = `
     <div class="screen play-screen">
       <div class="hud-top">
-        <div class="resource" title="Wood — from your sawmill">🪵 <span id="res-wood">0</span></div>
-        <div class="resource" title="Iron — from your mine">⛏️ <span id="res-iron">0</span></div>
-        <div class="resource" title="Food — from farms &amp; fishing">🐟 <span id="res-food">0</span></div>
+        <div class="resource" title="Wood — gathered around your town">🪵 <span id="res-wood">0</span></div>
+        <div class="resource" title="Stone — quarried near your town">🪨 <span id="res-stone">0</span></div>
+        <div class="resource" title="Fish — from Fishermen &amp; fishing voyages">🐟 <span id="res-fish">0</span></div>
         <div class="resource" title="Fur — from the allied fur island">🦊 <span id="res-fur">0</span></div>
+        <div class="resource" title="Coins — traded at the Market">🪙 <span id="res-coins">0</span></div>
         <div class="timer" id="timer">3:00</div>
         <button class="btn ghost small" id="quit-btn">Quit</button>
       </div>
@@ -331,16 +338,16 @@ function renderPlaying() {
 
     if (game.selectedShipId === null) return;
 
-    if (island && island.owner === 'neutral') {
+    if (island && !island.isHome && island.owner !== 'rival') {
       const ok = game.sendSelectedShip({ kind: 'island', id: island.id });
-      updateShipHint(ok ? null : 'Could not start that voyage.');
+      updateShipHint(ok ? 'Trade route established — the ship will keep sailing it.' : 'Could not start that voyage.');
       renderShipList();
       return;
     }
     const fish = fishAt(x, y);
     if (fish) {
       const ok = game.sendSelectedShip({ kind: 'fish', id: fish.id });
-      updateShipHint(ok ? 'Off to fish — food incoming.' : 'Could not start that voyage.');
+      updateShipHint(ok ? 'Off to fish — it will keep netting hauls.' : 'Could not start that voyage.');
       renderShipList();
     }
   });
@@ -355,8 +362,8 @@ function renderPlaying() {
     const game = ctx.game;
     hint.textContent =
       game && game.selectedShipId !== null
-        ? 'Ship selected — click a neutral isle or fish shoal.'
-        : 'Click your home isle to pick a ship, then a neutral isle or shoal.';
+        ? 'Ship selected — click an isle or fish shoal to start a standing trade route.'
+        : 'Click your home isle to pick a ship, then an isle or shoal.';
   }
 
   const buildPanelEl = document.querySelector<HTMLDivElement>('#build-panel')!;
@@ -370,7 +377,7 @@ function renderPlaying() {
   function renderBuildPanel() {
     const game = ctx.game;
     if (!game) return;
-    const keys: (keyof Buildings)[] = ['sawmill', 'mine', 'farm', 'shipyard'];
+    const keys: (keyof Buildings)[] = ['fishermen', 'workshop', 'market', 'shipyard', 'fortress'];
     buildPanelEl.innerHTML = keys
       .map((key) => {
         const level = game.buildings[key];
@@ -419,12 +426,22 @@ function renderPlaying() {
 
   const shipListEl = document.querySelector<HTMLDivElement>('#ship-list')!;
   shipListEl.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-ship]');
+    const target = e.target as HTMLElement;
     const game = ctx.game;
-    if (!btn || !game) return;
-    game.selectShip(Number(btn.dataset.ship));
-    updateShipHint();
-    renderShipList();
+    if (!game) return;
+    const selectBtn = target.closest<HTMLButtonElement>('button[data-ship]');
+    if (selectBtn) {
+      game.selectShip(Number(selectBtn.dataset.ship));
+      updateShipHint();
+      renderShipList();
+      return;
+    }
+    const recallBtn = target.closest<HTMLButtonElement>('button[data-recall]');
+    if (recallBtn) {
+      game.recallShip(Number(recallBtn.dataset.recall));
+      updateShipHint('Ship recalled — it will dock once it reaches harbor.');
+      renderShipList();
+    }
   });
 
   function renderShipList() {
@@ -440,18 +457,16 @@ function renderPlaying() {
     shipListEl.innerHTML = game.ships
       .map((s) => {
         const name = SHIP_CLASSES[s.shipClass].name;
-        const label =
-          s.state === 'building'
-            ? `Building (${Math.ceil(s.buildTimeLeft)}s)`
-            : s.state === 'docked'
-            ? 'Docked'
-            : s.state === 'outbound'
-            ? 'Sailing'
-            : 'Returning';
-        const selected = s.id === game.selectedShipId ? ' selected' : '';
-        return `<button class="ship-chip${selected}" data-ship="${s.id}" ${
-          s.state !== 'docked' ? 'disabled' : ''
-        }>⛵ ${name} · ${label}</button>`;
+        if (s.state === 'building') {
+          return `<button class="ship-chip" disabled>⛵ ${name} · Building (${Math.ceil(s.buildTimeLeft)}s)</button>`;
+        }
+        if (s.state === 'docked') {
+          const selected = s.id === game.selectedShipId ? ' selected' : '';
+          return `<button class="ship-chip${selected}" data-ship="${s.id}">⛵ ${name} · Docked</button>`;
+        }
+        const label = s.state === 'outbound' ? 'On route' : 'Returning';
+        const recallTag = s.recalled ? ' (recalling)' : '';
+        return `<button class="ship-chip sailing" data-recall="${s.id}">⛵ ${name} · ${label}${recallTag} ↩</button>`;
       })
       .join('');
   }
@@ -474,15 +489,17 @@ function renderPlaying() {
     render(ctx2d, game, now / 1000, hoveredIslandId, hoveredFishId);
 
     const woodEl = document.querySelector('#res-wood');
-    const ironEl = document.querySelector('#res-iron');
-    const foodEl = document.querySelector('#res-food');
+    const stoneEl = document.querySelector('#res-stone');
+    const fishEl = document.querySelector('#res-fish');
     const furEl = document.querySelector('#res-fur');
+    const coinsEl = document.querySelector('#res-coins');
     const timerEl = document.querySelector('#timer');
     const toastEl = document.querySelector<HTMLDivElement>('#toast');
     if (woodEl) woodEl.textContent = Math.floor(game.resources.wood).toString();
-    if (ironEl) ironEl.textContent = Math.floor(game.resources.iron).toString();
-    if (foodEl) foodEl.textContent = Math.floor(game.resources.food).toString();
+    if (stoneEl) stoneEl.textContent = Math.floor(game.resources.stone).toString();
+    if (fishEl) fishEl.textContent = Math.floor(game.resources.fish).toString();
     if (furEl) furEl.textContent = Math.floor(game.resources.fur).toString();
+    if (coinsEl) coinsEl.textContent = Math.floor(game.resources.coins).toString();
     if (timerEl) {
       timerEl.textContent = fmtTime(game.timeLeft);
       timerEl.classList.toggle('urgent', game.timeLeft <= 20);

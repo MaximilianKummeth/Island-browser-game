@@ -96,12 +96,18 @@ export function generateMap(): GeneratedMap {
     allianceProgress: 0,
     shape: makeShape(46, 12),
     trees: makeTrees(46, 'temperate', 6),
+    // Order matches HOME_BUILDING_ORDER in render.ts: fishermen, workshop,
+    // market, shipyard, fortress. The shipyard spot sits out toward the
+    // open water (up-right, away from the home corner) so it reads as a
+    // shore building rather than an inland one.
     buildingSpots: [
-      { dx: -14, dy: -6, scale: 1.1 },
-      { dx: 12, dy: -10, scale: 1.05 },
-      { dx: -8, dy: 12, scale: 1.05 },
-      { dx: 16, dy: 10, scale: 1.15 },
+      { dx: -30, dy: 10, scale: 1.0 },
+      { dx: -6, dy: -22, scale: 1.05 },
+      { dx: 8, dy: 6, scale: 1.0 },
+      { dx: 28, dy: -14, scale: 1.05 },
+      { dx: -18, dy: -2, scale: 1.15 },
     ],
+    stock: 0,
   };
   islands.push(home);
 
@@ -128,6 +134,7 @@ export function generateMap(): GeneratedMap {
       trees: makeTrees(42, 'temperate', 5),
       buildingSpots: makeBuildingSpots(42, 5),
       rivalId: i,
+      stock: 0,
     };
     islands.push(rivalIsland);
     rivals.push({
@@ -155,7 +162,8 @@ export function generateMap(): GeneratedMap {
     return null;
   }
 
-  // The fur island — a snowy wild isle up north. Allying it opens a fur trade.
+  // The fur island — a snowy wild isle up north. It's not inhabitable (no
+  // buildings/town ever generate here), but allying it opens a fur trade.
   const furSpot = tryPlace(44) ?? { x: WORLD_WIDTH / 2, y: 110 };
   const furIsland: Island = {
     id: nextId++,
@@ -171,7 +179,8 @@ export function generateMap(): GeneratedMap {
     allianceProgress: 0,
     shape: makeShape(44, 13),
     trees: makeTrees(44, 'snowy', 9),
-    buildingSpots: makeBuildingSpots(44, 3),
+    buildingSpots: [],
+    stock: 0,
   };
   islands.push(furIsland);
   placed.push({ x: furIsland.x, y: furIsland.y, radius: furIsland.radius });
@@ -199,12 +208,13 @@ export function generateMap(): GeneratedMap {
       shape: makeShape(radius, 11),
       trees: makeTrees(radius, terrain, size === 'large' ? 6 : size === 'medium' ? 4 : 2),
       buildingSpots: makeBuildingSpots(radius, buildingCountFor(size)),
+      stock: 0,
     });
     placed.push({ x: spot.x, y: spot.y, radius });
     created++;
   }
 
-  // Fish shoals out in open water — sail to them to bring back food.
+  // Fish shoals out in open water — sail to them to bring back fish.
   const fishSources: FishSource[] = [];
   let fishMade = 0;
   let fishAttempts = 0;

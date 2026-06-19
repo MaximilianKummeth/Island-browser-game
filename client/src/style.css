@@ -371,6 +371,13 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+.ship-chip.sailing {
+  background: rgba(63, 174, 132, 0.18);
+  border-color: rgba(63, 174, 132, 0.5);
+}
+.ship-chip.sailing:hover {
+  border-color: var(--danger);
+}
 
 @media (max-width: 700px) {
   .hud-bottom {
