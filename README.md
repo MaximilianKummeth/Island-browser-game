@@ -36,6 +36,18 @@ Open `http://localhost:5173` in a browser. You can play immediately as a
 guest — scores only save if you register/log in (top right of the start
 screen).
 
+## Game modes
+
+- **Free Play** — a 3-minute open round; build the highest score you can.
+- **Missions** — 28 timed challenges with a single objective each (hold or
+  gather a resource, colonise islands, build ships, or raise a building to a
+  level). Pick **Easy / Medium / Hard** — the *only* difference between them
+  is how much time you get (hard is the base clock, medium ×1.5, easy ×2).
+  Completing a mission marks it done for that difficulty (saved in your
+  browser). Mission objectives and time budgets were tuned with the
+  simulation playtest in `client/scripts/playtest.ts`, which auto-plays every
+  mission to confirm each one is winnable on all three difficulties.
+
 ## How a round works
 
 - You start on a home island producing a trickle of Wood, Stone, Fish and

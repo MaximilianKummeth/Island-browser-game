@@ -12,6 +12,8 @@ import type {
   ResourceKey,
   RunSummary,
 } from './types';
+import type { Mission, Difficulty } from './missions';
+import { missionDuration } from './missions';
 
 export const ROUND_SECONDS = 180;
 const TRADE_LAUNCH_FISH_COST = 8;
@@ -81,6 +83,12 @@ const MAX_LEVEL: Record<keyof Buildings, number> = {
 };
 
 export type RoundStatus = 'playing' | 'ended';
+export type Outcome = 'win' | 'loss' | null;
+
+export interface GameOptions {
+  mission?: Mission;
+  difficulty?: Difficulty;
+}
 
 // A point just off an island's shore, offset toward `towardX/Y`, so ships
 // dock and sail in open water and never sit on top of the land itself.
@@ -110,21 +118,58 @@ export class GameState {
   homeIslandId: number;
   ships: Ship[] = [];
   buildings: Buildings = { fishermen: 0, workshop: 0, market: 0, shipyard: 0, fortress: 0 };
-  resources: Resources = { stone: 40, wood: 60, fish: 45, fur: 0, coins: 20 };
+  resources: Resources = { stone: 55, wood: 75, fish: 50, fur: 0, coins: 35 };
   timeLeft = ROUND_SECONDS;
   status: RoundStatus = 'playing';
+  outcome: Outcome = null;
+  mission: Mission | null = null;
+  difficulty: Difficulty | null = null;
   shipsBuiltCount = 0;
   furGathered = 0;
+  /** Cumulative resources gathered (production + hauls), never reduced by spending. */
+  totalGathered: Resources = { stone: 0, wood: 0, fish: 0, fur: 0, coins: 0 };
   selectedShipId: number | null = null;
   private nextShipId = 1;
   toast: { text: string; ttl: number } | null = null;
 
-  constructor() {
+  constructor(opts: GameOptions = {}) {
     const map = generateMap();
     this.islands = map.islands;
     this.rivals = map.rivals;
     this.fishSources = map.fishSources;
     this.homeIslandId = map.homeIslandId;
+    if (opts.mission) {
+      this.mission = opts.mission;
+      this.difficulty = opts.difficulty ?? 'medium';
+      this.timeLeft = missionDuration(opts.mission, this.difficulty);
+    }
+  }
+
+  // ---- Mission objective tracking -----------------------------------------
+
+  objectiveCurrent(): number {
+    const o = this.mission?.objective;
+    if (!o) return 0;
+    switch (o.kind) {
+      case 'have':
+        return Math.floor(this.resources[o.resource!]);
+      case 'total':
+        return Math.floor(this.totalGathered[o.resource!]);
+      case 'colonies':
+        return this.islandsClaimed();
+      case 'ships':
+        return this.shipsBuiltCount;
+      case 'building':
+        return this.buildings[o.building!];
+    }
+  }
+
+  objectiveTarget(): number {
+    return this.mission?.objective.amount ?? 0;
+  }
+
+  objectiveMet(): boolean {
+    return this.mission ? this.objectiveCurrent() >= this.objectiveTarget() : false;
   }
 
   get homeIsland(): Island {
@@ -167,7 +212,7 @@ export class GameState {
       stone: 0.8 * workshopMult,
       fish: (0.5 + this.buildings.fishermen * 0.9) * workshopMult,
       fur: 0,
-      coins: this.buildings.market * 1.4,
+      coins: this.buildings.market * 1.8,
     };
     for (const island of this.alliedIslands()) {
       for (const p of island.producers) {
@@ -434,6 +479,7 @@ export class GameState {
         if (ship.cargo > 0 && ship.cargoResource) {
           if (ship.owner === 'player') {
             this.resources[ship.cargoResource] += ship.cargo;
+            this.totalGathered[ship.cargoResource] += ship.cargo;
             if (ship.cargoResource === 'fur') this.furGathered += ship.cargo;
           }
           ship.cargo = 0;
@@ -538,6 +584,10 @@ export class GameState {
 
       const home = this.getIsland(rival.homeIslandId);
       if (!home) continue;
+      // Rivals compete, but won't swallow the whole map — each lord holds at
+      // most three colonies, leaving plenty for the player to fight over.
+      const held = this.islands.filter((i) => i.owner === 'rival' && i.rivalId === rival.id).length;
+      if (held >= 2) continue;
       // Don't dispatch toward an isle a rival ship is already colonising.
       const claimed = new Set(
         this.ships
@@ -600,13 +650,16 @@ export class GameState {
 
   private updateResources(dt: number) {
     const prod = this.buildingProductionPerSec();
-    this.resources.wood += prod.wood * dt;
-    this.resources.stone += prod.stone * dt;
-    this.resources.fish += prod.fish * dt;
-    this.resources.coins += prod.coins * dt;
+    const keys: ResourceKey[] = ['wood', 'stone', 'fish', 'coins'];
+    for (const k of keys) {
+      const gain = prod[k] * dt;
+      this.resources[k] += gain;
+      this.totalGathered[k] += gain;
+    }
     if (prod.fur > 0) {
       const gain = prod.fur * dt;
       this.resources.fur += gain;
+      this.totalGathered.fur += gain;
       this.furGathered += gain;
     }
   }
@@ -640,10 +693,19 @@ export class GameState {
     this.updateFishSources(dt);
     this.updateNeutralStock(dt);
 
+    // Mission objectives can be cleared early — the moment you hit the target,
+    // the round is won.
+    if (this.mission && this.objectiveMet()) {
+      this.status = 'ended';
+      this.outcome = 'win';
+      return;
+    }
+
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
       this.status = 'ended';
+      if (this.mission) this.outcome = this.objectiveMet() ? 'win' : 'loss';
     }
   }
 }

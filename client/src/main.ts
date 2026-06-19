@@ -3,13 +3,21 @@ import { GameState, ROUND_SECONDS, SHIP_CLASSES } from './game/state';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './game/mapgen';
 import { render } from './game/render';
 import { levelColor } from './game/palette';
+import {
+  MISSIONS,
+  DIFFICULTIES,
+  missionDuration,
+  objectiveText,
+  type Mission,
+  type Difficulty,
+} from './game/missions';
 import type { Island, FishSource, Buildings, ShipClass, ResourceKey } from './game/types';
 import * as api from './api';
 import type { AuthUser, Profile } from './api';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
-type Screen = 'start' | 'auth' | 'playing' | 'summary' | 'leaderboard';
+type Screen = 'start' | 'auth' | 'playing' | 'summary' | 'leaderboard' | 'missions';
 
 interface AppCtx {
   screen: Screen;
@@ -19,6 +27,8 @@ interface AppCtx {
   authMode: 'login' | 'register';
   authError: string | null;
   submitting: boolean;
+  difficulty: Difficulty;
+  lastMission: Mission | null;
 }
 
 const ctx: AppCtx = {
@@ -29,7 +39,21 @@ const ctx: AppCtx = {
   authMode: 'login',
   authError: null,
   submitting: false,
+  difficulty: 'medium',
+  lastMission: null,
 };
+
+const DIFF_LABEL: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+
+function missionKey(id: number, d: Difficulty): string {
+  return `frostmere_mission_${id}_${d}`;
+}
+function isMissionDone(id: number, d: Difficulty): boolean {
+  return localStorage.getItem(missionKey(id, d)) === '1';
+}
+function markMissionDone(id: number, d: Difficulty) {
+  localStorage.setItem(missionKey(id, d), '1');
+}
 
 const RES_ICON: Record<ResourceKey, string> = {
   wood: '🪵',
@@ -82,6 +106,7 @@ function renderApp() {
   else if (ctx.screen === 'playing') renderPlaying();
   else if (ctx.screen === 'summary') renderSummary();
   else if (ctx.screen === 'leaderboard') void renderLeaderboard();
+  else if (ctx.screen === 'missions') renderMissions();
 }
 
 function renderStart() {
@@ -98,13 +123,18 @@ function renderStart() {
         }
       </div>
       <div class="menu-actions">
-        <button class="btn primary" id="play-btn">Set Sail (Play Round)</button>
+        <button class="btn primary" id="play-btn">Set Sail (Free Play)</button>
+        <button class="btn primary" id="missions-btn">Missions</button>
         <button class="btn ghost" id="leaderboard-btn">Leaderboard</button>
       </div>
       <p class="hint">No account needed to play — log in to save your best scores.</p>
     </div>
   `;
   document.querySelector('#play-btn')?.addEventListener('click', startRound);
+  document.querySelector('#missions-btn')?.addEventListener('click', () => {
+    ctx.screen = 'missions';
+    renderApp();
+  });
   document.querySelector('#login-open-btn')?.addEventListener('click', () => {
     ctx.screen = 'auth';
     ctx.authError = null;
@@ -197,9 +227,71 @@ async function renderLeaderboard() {
   });
 }
 
+function renderMissions() {
+  const d = ctx.difficulty;
+  const doneCount = MISSIONS.filter((m) => isMissionDone(m.id, d)).length;
+  const diffButtons = DIFFICULTIES.map(
+    (key) =>
+      `<button class="btn small diff-btn${key === d ? ' active' : ''}" data-diff="${key}">${DIFF_LABEL[key]}</button>`
+  ).join('');
+  const cards = MISSIONS.map((m) => {
+    const secs = missionDuration(m, d);
+    const mm = Math.floor(secs / 60);
+    const ss = secs % 60;
+    const time = mm > 0 ? `${mm}:${ss.toString().padStart(2, '0')}` : `${ss}s`;
+    const done = isMissionDone(m.id, d);
+    return `
+      <div class="mission-card${done ? ' done' : ''}">
+        <div class="mission-card-head">
+          <h3>${m.title}</h3>
+          ${done ? '<span class="mission-tick">✓</span>' : ''}
+        </div>
+        <p class="mission-desc">${m.description}</p>
+        <p class="mission-obj">🎯 ${objectiveText(m.objective)}</p>
+        <div class="mission-card-foot">
+          <span class="mission-time">⏱ ${time}</span>
+          <button class="btn small primary" data-mission="${m.id}">Play</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="screen missions-screen">
+      <h2>Missions</h2>
+      <p class="subtitle">Complete each objective before time runs out. Difficulty changes only the clock.</p>
+      <div class="diff-row">
+        <span class="diff-label">Difficulty:</span>
+        ${diffButtons}
+        <span class="muted">${doneCount}/${MISSIONS.length} done on ${DIFF_LABEL[d]}</span>
+      </div>
+      <div class="mission-grid">${cards}</div>
+      <button class="btn ghost" id="back-btn">Back to Menu</button>
+    </div>
+  `;
+
+  app.querySelectorAll<HTMLButtonElement>('button[data-diff]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      ctx.difficulty = btn.dataset.diff as Difficulty;
+      renderApp();
+    });
+  });
+  app.querySelectorAll<HTMLButtonElement>('button[data-mission]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mission = MISSIONS.find((m) => m.id === Number(btn.dataset.mission));
+      if (mission) startMission(mission, ctx.difficulty);
+    });
+  });
+  document.querySelector('#back-btn')?.addEventListener('click', () => {
+    ctx.screen = 'start';
+    renderApp();
+  });
+}
+
 function renderSummary() {
   if (!ctx.game) return;
-  const summary = ctx.game.computeSummary();
+  const game = ctx.game;
+  if (game.mission) return renderMissionSummary();
+  const summary = game.computeSummary();
   app.innerHTML = `
     <div class="screen summary-screen">
       <h2>Voyage Complete</h2>
@@ -231,6 +323,38 @@ function renderSummary() {
   });
 }
 
+function renderMissionSummary() {
+  if (!ctx.game || !ctx.game.mission) return;
+  const game = ctx.game;
+  const mission = game.mission!;
+  const won = game.outcome === 'win';
+  app.innerHTML = `
+    <div class="screen summary-screen">
+      <h2>${won ? '🏆 Mission Complete!' : '💀 Mission Failed'}</h2>
+      <p class="subtitle">${mission.title} · ${DIFF_LABEL[ctx.difficulty]}</p>
+      <div class="summary-grid">
+        <div><span>Objective</span><strong class="small-strong">${objectiveText(mission.objective)}</strong></div>
+        <div><span>You reached</span><strong>${game.objectiveCurrent()} / ${game.objectiveTarget()}</strong></div>
+      </div>
+      <p class="hint">${won ? 'Marked complete on this difficulty.' : 'Try again — or drop to an easier clock.'}</p>
+      <div class="menu-actions">
+        <button class="btn primary" id="retry-btn">${won ? 'Play Again' : 'Retry'}</button>
+        <button class="btn ghost" id="missions-btn">Missions</button>
+        <button class="btn ghost" id="menu-btn">Main Menu</button>
+      </div>
+    </div>
+  `;
+  document.querySelector('#retry-btn')?.addEventListener('click', () => startMission(mission, ctx.difficulty));
+  document.querySelector('#missions-btn')?.addEventListener('click', () => {
+    ctx.screen = 'missions';
+    renderApp();
+  });
+  document.querySelector('#menu-btn')?.addEventListener('click', () => {
+    ctx.screen = 'start';
+    renderApp();
+  });
+}
+
 function startRound() {
   ctx.game = new GameState();
   if (import.meta.env.DEV) {
@@ -240,9 +364,29 @@ function startRound() {
   renderApp();
 }
 
+function startMission(mission: Mission, difficulty: Difficulty) {
+  ctx.difficulty = difficulty;
+  ctx.lastMission = mission;
+  ctx.game = new GameState({ mission, difficulty });
+  if (import.meta.env.DEV) {
+    (window as unknown as { __game: GameState }).__game = ctx.game;
+  }
+  ctx.screen = 'playing';
+  renderApp();
+}
+
 async function finishRound() {
   if (!ctx.game) return;
-  const summary = ctx.game.computeSummary();
+  const game = ctx.game;
+
+  if (game.mission) {
+    if (game.outcome === 'win') markMissionDone(game.mission.id, ctx.difficulty);
+    ctx.screen = 'summary';
+    renderApp();
+    return;
+  }
+
+  const summary = game.computeSummary();
   if (ctx.user) {
     ctx.submitting = true;
     try {
@@ -263,6 +407,7 @@ function renderPlaying() {
   app.innerHTML = `
     <div class="screen play-screen">
       <div class="hud-top" id="hud-top"></div>
+      <div class="objective-bar" id="objective-bar"></div>
       <div class="canvas-wrap">
         <canvas id="game-canvas"></canvas>
         <div class="toast" id="toast"></div>
@@ -612,7 +757,29 @@ function renderPlaying() {
     });
   }
 
+  function renderObjectiveBar() {
+    const game = ctx.game;
+    const bar = document.querySelector<HTMLDivElement>('#objective-bar');
+    if (!game || !bar) return;
+    if (!game.mission) {
+      bar.classList.add('hidden');
+      return;
+    }
+    bar.classList.remove('hidden');
+    const cur = game.objectiveCurrent();
+    const target = game.objectiveTarget();
+    const pct = Math.min(100, Math.round((cur / target) * 100));
+    bar.innerHTML = `
+      <div class="objective-text">
+        <strong>${game.mission.title}</strong> — ${objectiveText(game.mission.objective)}
+        <span class="objective-count">${cur} / ${target}</span>
+      </div>
+      <div class="objective-track"><div class="objective-fill" style="width:${pct}%"></div></div>
+    `;
+  }
+
   renderHud();
+  renderObjectiveBar();
   renderBuildPanel();
   renderShipList();
   updateShipHint();
@@ -651,6 +818,7 @@ function renderPlaying() {
     if (hudAccumulator >= 0.25) {
       hudAccumulator = 0;
       renderHud();
+      renderObjectiveBar();
       renderBuildPanel();
       renderShipList();
       if (menuTarget) renderMenu();

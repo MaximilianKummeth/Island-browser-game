@@ -27,9 +27,9 @@ function makeShape(radius: number, points: number): number[] {
 
 function sizeFor(): { size: IslandSize; radius: number; colonizeCost: number } {
   const roll = Math.random();
-  if (roll < 0.45) return { size: 'small', radius: 30, colonizeCost: 30 };
-  if (roll < 0.8) return { size: 'medium', radius: 38, colonizeCost: 55 };
-  return { size: 'large', radius: 46, colonizeCost: 85 };
+  if (roll < 0.45) return { size: 'small', radius: 23, colonizeCost: 30 };
+  if (roll < 0.8) return { size: 'medium', radius: 29, colonizeCost: 55 };
+  return { size: 'large', radius: 35, colonizeCost: 85 };
 }
 
 function distance(ax: number, ay: number, bx: number, by: number): number {
@@ -181,7 +181,7 @@ export function generateMap(): GeneratedMap {
       id: nextId++,
       x: spot.x,
       y: spot.y,
-      radius: 52,
+      radius: 46,
       size: 'large',
       terrain: 'temperate',
       owner: 'rival',
@@ -191,9 +191,9 @@ export function generateMap(): GeneratedMap {
       colonizeCost: 0,
       resource: 'wood',
       producers: [],
-      shape: makeShape(52, 12),
-      trees: makeTrees(52, 'temperate', 5),
-      buildingSpots: makeBuildingSpots(52, 5),
+      shape: makeShape(46, 12),
+      trees: makeTrees(46, 'temperate', 5),
+      buildingSpots: makeBuildingSpots(46, 5),
       rivalId: i,
       stock: 0,
       stockCap: 0,
@@ -203,8 +203,8 @@ export function generateMap(): GeneratedMap {
       id: i,
       homeIslandId: rivalIsland.id,
       color: RIVAL_COLORS[i],
-      launchTimer: 8 + Math.random() * 5,
-      launchInterval: 16,
+      launchTimer: 16 + Math.random() * 6,
+      launchInterval: 26,
       coins: 80,
     });
   });
@@ -216,10 +216,10 @@ export function generateMap(): GeneratedMap {
   }));
 
   function tryPlace(radius: number): { x: number; y: number } | null {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const x = 230 + Math.random() * (WORLD_WIDTH - 460);
-      const y = 90 + Math.random() * (WORLD_HEIGHT - 180);
-      const clear = placed.every((p) => distance(x, y, p.x, p.y) > p.radius + radius + 56);
+    for (let attempt = 0; attempt < 220; attempt++) {
+      const x = 205 + Math.random() * (WORLD_WIDTH - 410);
+      const y = 80 + Math.random() * (WORLD_HEIGHT - 160);
+      const clear = placed.every((p) => distance(x, y, p.x, p.y) > p.radius + radius + 30);
       if (clear) return { x, y };
     }
     return null;
@@ -234,7 +234,7 @@ export function generateMap(): GeneratedMap {
     { kind: 'wood', terrain: 'temperate', resource: 'wood', fallback: { x: WORLD_WIDTH / 2 + 150, y: 130 } },
   ];
   for (const s of specials) {
-    const radius = 50;
+    const radius = 42;
     const spot = tryPlace(radius) ?? s.fallback;
     islands.push({
       id: nextId++,
@@ -261,7 +261,7 @@ export function generateMap(): GeneratedMap {
   }
 
   // Scatter the contested neutral isles — these are the ones players colonise.
-  const neutralCount = 7;
+  const neutralCount = 14;
   let created = 0;
   while (created < neutralCount) {
     const { size, radius, colonizeCost } = sizeFor();
@@ -300,13 +300,13 @@ export function generateMap(): GeneratedMap {
   const fishSources: FishSource[] = [];
   let fishMade = 0;
   let fishAttempts = 0;
-  while (fishMade < 5 && fishAttempts < 200) {
+  while (fishMade < 4 && fishAttempts < 200) {
     fishAttempts++;
-    const x = 220 + Math.random() * (WORLD_WIDTH - 420);
-    const y = 80 + Math.random() * (WORLD_HEIGHT - 160);
-    const radius = 28;
-    const clearOfIslands = placed.every((p) => distance(x, y, p.x, p.y) > p.radius + radius + 24);
-    const clearOfFish = fishSources.every((f) => distance(x, y, f.x, f.y) > 130);
+    const x = 205 + Math.random() * (WORLD_WIDTH - 410);
+    const y = 75 + Math.random() * (WORLD_HEIGHT - 150);
+    const radius = 24;
+    const clearOfIslands = placed.every((p) => distance(x, y, p.x, p.y) > p.radius + radius + 18);
+    const clearOfFish = fishSources.every((f) => distance(x, y, f.x, f.y) > 120);
     if (!clearOfIslands || !clearOfFish) continue;
     const fish: Decor[] = [];
     const fishCount = 4 + Math.floor(Math.random() * 3);
