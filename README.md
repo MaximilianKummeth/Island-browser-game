@@ -38,29 +38,34 @@ screen).
 
 ## How a round works
 
-- You start on a home island producing a trickle of Wood, Stone, and Fish.
-  Each building's roof colour on the map reflects its level, so you can read
-  your town's development at a glance.
+- You start on a home island producing a trickle of Wood, Stone, Fish and
+  Coins. Each building's roof colour on the map reflects its level, so you can
+  read your town's development at a glance.
 - Five buildings to upgrade on your home isle: **Fishermen** (more Fish),
-  **Workshop** (boosts all local production), **Market** (trades surplus
-  for Coins), **Shipyard** — built right on the shore — (more ship slots,
-  unlocks bigger hulls), and **Fortress** (extra ship slots).
-- Build ships in three sizes — **Skiff** (cheap, fast, weak), **Galley**, and
-  **Galleon** (slow, expensive, strong alliance pull). The Shipyard level
-  gates the larger classes. Ships always launch and dock just offshore —
-  never sitting on the island itself.
-- Send a ship to an island or **fish shoal** and it sets up a standing trade
-  route: it keeps sailing back and forth on its own, delivering goodwill (or
-  netting Fish) every lap, until you recall it. Voyages cost Fish to launch.
-- Small isles need one visit to ally, larger ones two or three. Wild,
-  unallied islands quietly stockpile up to 150 resources at 20/second —
-  capture one (or keep a trade route running to it) to bring that stockpile
-  home.
-- The snowy **fur island** up north is uninhabitable — no buildings ever
-  grow there — but ally it and it yields a steady stream of Fur, worth a lot
-  of points. Fur can only come from that island.
-- Two rival lords are doing the same from their own islands — they don't
-  attack you, but they will out-ally you for nearby isles if you're too slow.
-- The round ends after 3 minutes. Your score rewards islands allied, fur
+  **Workshop** (boosts all home production), **Market** (mints the Coins you
+  need to found colonies), **Shipyard** (more ship slots, unlocks bigger
+  hulls), and **Fortress** — whose walls ring the whole town and which grants
+  extra ship slots.
+- Build ships in three sizes — **Skiff** (cheap, fast), **Galley**, and
+  **Galleon** (slow, expensive). Only the **Galleon** can colonise islands.
+  The Shipyard level gates the larger classes. Ships always launch and dock
+  just offshore — never sitting on the island itself.
+- **Click any island or fish shoal** to open its menu. It shows exactly what
+  the isle produces — each animal/work crew and its rate per second — plus
+  how much it has stockpiled.
+- **Colonising:** send a Galleon to a free, colonisable island and spend
+  Coins to plant a colony. A colony then pays its producers' output straight
+  into your stores, no ships required. You need a Galleon to do this at all.
+- **Harvesting:** send any ship on a standing route to a shoal or a wild isle
+  to keep ferrying its stockpile home. Voyages cost a little Fish to launch.
+- **Special isles** — the snowy **Fur** isle, the **Stone** isle, and the
+  **Wood** isle — can never be colonised by anyone. They sit neutral forever,
+  produce far more than ordinary isles, and bank a deep stockpile. Keep
+  harvest routes running to them to reap the rewards.
+- Wild islands and shoals refill their stockpile up to a cap and then stop —
+  they only regenerate once a fleet has drawn them back down.
+- Two rival lords sail their own galleons out to colonise nearby isles. They
+  don't attack you, but they will claim free islands if you're too slow.
+- The round ends after 3 minutes. Your score rewards islands colonised, fur
   gathered, ships built, and resources banked. If you're logged in, it's
   saved to your profile and the leaderboard.

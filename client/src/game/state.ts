@@ -4,26 +4,25 @@ import type {
   Rival,
   Ship,
   ShipClass,
+  ShipPurpose,
   ShipTarget,
   FishSource,
   Buildings,
   Resources,
+  ResourceKey,
   RunSummary,
 } from './types';
 
 export const ROUND_SECONDS = 180;
-const SHIP_SEND_FISH_COST = 16;
-const FUR_RATE = 0.7; // fur/sec from an allied fur island
-const NEUTRAL_STOCK_CAP = 150;
-const NEUTRAL_STOCK_RATE = 20; // resources/sec a wild, uninhabited island generates
+const TRADE_LAUNCH_FISH_COST = 8;
 
 export interface ShipClassDef {
   key: ShipClass;
   name: string;
   cost: Partial<Resources>;
   speed: number; // px/sec
-  alliancePower: number; // alliance points delivered per voyage
-  fishCargo: number; // fish carried home from a shoal
+  cargo: number; // resources carried home per harvest run
+  canColonize: boolean;
   buildTime: number; // sec
   scale: number; // render size
   requiresShipyard: number; // min shipyard level to build
@@ -34,33 +33,33 @@ export const SHIP_CLASSES: Record<ShipClass, ShipClassDef> = {
     key: 'skiff',
     name: 'Skiff',
     cost: { wood: 15 },
-    speed: 158,
-    alliancePower: 1,
-    fishCargo: 18,
+    speed: 162,
+    cargo: 22,
+    canColonize: false,
     buildTime: 2,
-    scale: 0.8,
+    scale: 1.0,
     requiresShipyard: 0,
   },
   galley: {
     key: 'galley',
     name: 'Galley',
     cost: { wood: 26, stone: 12 },
-    speed: 126,
-    alliancePower: 2,
-    fishCargo: 32,
+    speed: 130,
+    cargo: 40,
+    canColonize: false,
     buildTime: 4,
-    scale: 1.0,
+    scale: 1.2,
     requiresShipyard: 1,
   },
   galleon: {
     key: 'galleon',
     name: 'Galleon',
     cost: { wood: 45, stone: 30 },
-    speed: 100,
-    alliancePower: 3,
-    fishCargo: 55,
+    speed: 104,
+    cargo: 64,
+    canColonize: true, // only the galleon can claim islands
     buildTime: 6,
-    scale: 1.28,
+    scale: 1.5,
     requiresShipyard: 2,
   },
 };
@@ -99,6 +98,11 @@ function shorePoint(
   return { x: originX + (dx / len) * off, y: originY + (dy / len) * off };
 }
 
+export interface ActionResult {
+  ok: boolean;
+  message: string;
+}
+
 export class GameState {
   islands: Island[];
   rivals: Rival[];
@@ -106,13 +110,12 @@ export class GameState {
   homeIslandId: number;
   ships: Ship[] = [];
   buildings: Buildings = { fishermen: 0, workshop: 0, market: 0, shipyard: 0, fortress: 0 };
-  resources: Resources = { stone: 30, wood: 45, fish: 35, fur: 0, coins: 5 };
+  resources: Resources = { stone: 40, wood: 60, fish: 45, fur: 0, coins: 20 };
   timeLeft = ROUND_SECONDS;
   status: RoundStatus = 'playing';
   shipsBuiltCount = 0;
   furGathered = 0;
   selectedShipId: number | null = null;
-  private rivalProgress = new Map<number, number[]>();
   private nextShipId = 1;
   toast: { text: string; ttl: number } | null = null;
 
@@ -131,7 +134,11 @@ export class GameState {
   }
 
   maxShips(): number {
-    return 1 + this.buildings.shipyard + this.buildings.fortress;
+    return 2 + this.buildings.shipyard + this.buildings.fortress;
+  }
+
+  playerShips(): Ship[] {
+    return this.ships.filter((s) => s.owner === 'player');
   }
 
   alliedIslands(): Island[] {
@@ -142,21 +149,32 @@ export class GameState {
     return this.alliedIslands().length;
   }
 
-  hasAlliedFurIsland(): boolean {
-    return this.islands.some((i) => i.isFurIsland && i.owner === 'player');
+  getIsland(id: number): Island | undefined {
+    return this.islands.find((i) => i.id === id);
   }
 
+  getFish(id: number): FishSource | undefined {
+    return this.fishSources.find((f) => f.id === id);
+  }
+
+  // The home town plus every island you own producing a steady stream into
+  // your stores. Owned islands pay out their producers directly; you don't
+  // need to keep ships running to them.
   buildingProductionPerSec(): Resources {
-    // Allied villages contribute a small steady trickle on top of the home town.
-    const allied = this.alliedIslands().length;
     const workshopMult = 1 + this.buildings.workshop * 0.22;
-    return {
-      wood: (1 + allied * 0.4) * workshopMult,
-      stone: (0.6 + allied * 0.25) * workshopMult,
-      fish: (0.5 + this.buildings.fishermen * 0.9 + allied * 0.3) * workshopMult,
-      fur: this.hasAlliedFurIsland() ? FUR_RATE : 0,
-      coins: this.buildings.market * 0.5,
+    const prod: Resources = {
+      wood: 1.2 * workshopMult,
+      stone: 0.8 * workshopMult,
+      fish: (0.5 + this.buildings.fishermen * 0.9) * workshopMult,
+      fur: 0,
+      coins: this.buildings.market * 1.4,
     };
+    for (const island of this.alliedIslands()) {
+      for (const p of island.producers) {
+        prod[p.resource] += p.ratePerSec * workshopMult;
+      }
+    }
+    return prod;
   }
 
   upgradeCost(key: keyof Buildings): Partial<Resources> | null {
@@ -189,7 +207,7 @@ export class GameState {
     const def = SHIP_CLASSES[shipClass];
     return (
       this.status === 'playing' &&
-      this.ships.length < this.maxShips() &&
+      this.playerShips().length < this.maxShips() &&
       this.buildings.shipyard >= def.requiresShipyard &&
       this.canAfford(def.cost)
     );
@@ -203,8 +221,10 @@ export class GameState {
     const harbor = shorePoint(home.x, home.y, home.radius, WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
     this.ships.push({
       id: this.nextShipId++,
+      owner: 'player',
       shipClass,
       state: 'building',
+      purpose: 'trade',
       x: harbor.x,
       y: harbor.y,
       fromX: harbor.x,
@@ -214,7 +234,8 @@ export class GameState {
       progress: 0,
       heading: 0,
       target: null,
-      cargoFish: 0,
+      cargo: 0,
+      cargoResource: null,
       buildTimeLeft: def.buildTime,
       recalled: false,
     });
@@ -234,18 +255,102 @@ export class GameState {
     return true;
   }
 
+  // ---- Player actions issued from the island menu --------------------------
+
+  private dockedPlayerShips(): Ship[] {
+    return this.ships.filter((s) => s.owner === 'player' && s.state === 'docked');
+  }
+
+  /** A docked galleon, preferring the currently selected ship if it qualifies. */
+  private pickColonizer(): Ship | null {
+    const docked = this.dockedPlayerShips().filter((s) => SHIP_CLASSES[s.shipClass].canColonize);
+    if (this.selectedShipId !== null) {
+      const sel = docked.find((s) => s.id === this.selectedShipId);
+      if (sel) return sel;
+    }
+    return docked[0] ?? null;
+  }
+
+  private pickTrader(): Ship | null {
+    const docked = this.dockedPlayerShips();
+    if (this.selectedShipId !== null) {
+      const sel = docked.find((s) => s.id === this.selectedShipId);
+      if (sel) return sel;
+    }
+    // Save galleons for colonising when a smaller hull is free.
+    const small = docked.find((s) => !SHIP_CLASSES[s.shipClass].canColonize);
+    return small ?? docked[0] ?? null;
+  }
+
+  hasGalleon(): boolean {
+    return this.playerShips().some((s) => SHIP_CLASSES[s.shipClass].canColonize);
+  }
+
+  /** Send a docked galleon to colonise a neutral, colonisable island. */
+  colonize(islandId: number): ActionResult {
+    if (this.status !== 'playing') return { ok: false, message: 'The round is over.' };
+    const island = this.getIsland(islandId);
+    if (!island || !island.colonizable) return { ok: false, message: 'This island cannot be colonised.' };
+    if (island.owner === 'player') return { ok: false, message: 'You already hold this island.' };
+    if (island.owner === 'rival') return { ok: false, message: 'A rival already controls this island.' };
+    if (!this.hasGalleon()) return { ok: false, message: 'You need a Galleon to colonise islands.' };
+    if (this.resources.coins < island.colonizeCost) {
+      return { ok: false, message: `Need ${island.colonizeCost} coins to colonise this isle.` };
+    }
+    const ship = this.pickColonizer();
+    if (!ship) return { ok: false, message: 'No Galleon is docked and ready.' };
+    ship.recalled = false;
+    this.beginOutboundLeg(ship, { kind: 'island', id: islandId }, 'colonize');
+    this.selectedShipId = null;
+    return { ok: true, message: 'Galleon dispatched to colonise the isle.' };
+  }
+
+  /** Send a docked ship to set up a standing harvest route. */
+  gather(target: ShipTarget): ActionResult {
+    if (this.status !== 'playing') return { ok: false, message: 'The round is over.' };
+    if (target.kind === 'island') {
+      const island = this.getIsland(target.id);
+      if (!island || island.isHome) return { ok: false, message: 'Nothing to harvest there.' };
+      if (island.owner === 'rival') return { ok: false, message: 'A rival controls that island.' };
+      if (island.owner === 'player') return { ok: false, message: 'Owned isles pay out on their own.' };
+    } else if (!this.getFish(target.id)) {
+      return { ok: false, message: 'No shoal there.' };
+    }
+    const ship = this.pickTrader();
+    if (!ship) return { ok: false, message: 'No ship is docked and ready.' };
+    if (this.resources.fish < TRADE_LAUNCH_FISH_COST) {
+      return { ok: false, message: 'Not enough fish stores to provision the voyage.' };
+    }
+    this.resources.fish -= TRADE_LAUNCH_FISH_COST;
+    ship.recalled = false;
+    this.beginOutboundLeg(ship, target, 'trade');
+    this.selectedShipId = null;
+    return { ok: true, message: 'Harvest route established — the ship will keep sailing it.' };
+  }
+
+  // ---- Ship movement -------------------------------------------------------
+
+  private homeOf(ship: Ship): Island {
+    if (ship.owner === 'rival' && ship.rivalId !== undefined) {
+      const rival = this.rivals.find((r) => r.id === ship.rivalId);
+      const home = rival && this.getIsland(rival.homeIslandId);
+      if (home) return home;
+    }
+    return this.homeIsland;
+  }
+
   private targetAnchor(target: ShipTarget | null): { x: number; y: number; radius: number } | null {
     if (!target) return null;
     if (target.kind === 'island') {
-      const island = this.islands.find((i) => i.id === target.id);
+      const island = this.getIsland(target.id);
       return island ? { x: island.x, y: island.y, radius: island.radius } : null;
     }
-    const source = this.fishSources.find((f) => f.id === target.id);
+    const source = this.getFish(target.id);
     return source ? { x: source.x, y: source.y, radius: 0 } : null;
   }
 
-  private beginOutboundLeg(ship: Ship, target: ShipTarget) {
-    const home = this.homeIsland;
+  private beginOutboundLeg(ship: Ship, target: ShipTarget, purpose: ShipPurpose) {
+    const home = this.homeOf(ship);
     const anchor = this.targetAnchor(target);
     if (!anchor) return;
     const fromPoint = shorePoint(home.x, home.y, home.radius, anchor.x, anchor.y);
@@ -259,13 +364,15 @@ export class GameState {
     ship.toY = toPoint.y;
     ship.heading = Math.atan2(toPoint.y - fromPoint.y, toPoint.x - fromPoint.x);
     ship.progress = 0;
-    ship.cargoFish = 0;
+    ship.cargo = 0;
+    ship.cargoResource = null;
     ship.target = target;
+    ship.purpose = purpose;
     ship.state = 'outbound';
   }
 
   private beginReturnLeg(ship: Ship) {
-    const home = this.homeIsland;
+    const home = this.homeOf(ship);
     const anchor = this.targetAnchor(ship.target) ?? { x: ship.toX, y: ship.toY, radius: 0 };
     const fromPoint =
       anchor.radius > 0
@@ -281,49 +388,27 @@ export class GameState {
     ship.state = 'returning';
   }
 
-  sendSelectedShip(target: ShipTarget): boolean {
-    if (this.status !== 'playing' || this.selectedShipId === null) return false;
-    const ship = this.ships.find((s) => s.id === this.selectedShipId);
-    if (!ship || ship.state !== 'docked') return false;
-
-    if (target.kind === 'island') {
-      const island = this.islands.find((i) => i.id === target.id);
-      if (!island || island.isHome || island.owner === 'rival') return false;
-    } else if (!this.fishSources.some((f) => f.id === target.id)) {
-      return false;
-    }
-
-    if (this.resources.fish < SHIP_SEND_FISH_COST) {
-      this.showToast('Not enough fish stores for this voyage');
-      return false;
-    }
-    this.resources.fish -= SHIP_SEND_FISH_COST;
-    ship.recalled = false;
-    this.beginOutboundLeg(ship, target);
-    this.selectedShipId = null;
-    return true;
-  }
-
   private showToast(text: string) {
-    this.toast = { text, ttl: 2.2 };
+    this.toast = { text, ttl: 2.4 };
   }
 
   private isRouteValid(target: ShipTarget | null): boolean {
     if (!target) return false;
     if (target.kind === 'island') {
-      const island = this.islands.find((i) => i.id === target.id);
-      return !!island && island.owner !== 'rival';
+      const island = this.getIsland(target.id);
+      return !!island && island.owner !== 'rival' && island.owner !== 'player';
     }
     return this.fishSources.some((f) => f.id === target.id);
   }
 
   private updateShips(dt: number) {
-    const home = this.homeIsland;
+    const finished: Ship[] = [];
     for (const ship of this.ships) {
       if (ship.state === 'building') {
         ship.buildTimeLeft -= dt;
         if (ship.buildTimeLeft <= 0) {
           ship.state = 'docked';
+          const home = this.homeOf(ship);
           const harbor = shorePoint(home.x, home.y, home.radius, WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
           ship.x = harbor.x;
           ship.y = harbor.y;
@@ -345,23 +430,39 @@ export class GameState {
         this.resolveArrival(ship);
         this.beginReturnLeg(ship);
       } else {
-        if (ship.cargoFish > 0) {
-          this.resources.fish += ship.cargoFish;
-          ship.cargoFish = 0;
+        // Arrived home — unload cargo.
+        if (ship.cargo > 0 && ship.cargoResource) {
+          if (ship.owner === 'player') {
+            this.resources[ship.cargoResource] += ship.cargo;
+            if (ship.cargoResource === 'fur') this.furGathered += ship.cargo;
+          }
+          ship.cargo = 0;
+          ship.cargoResource = null;
         }
-        const keepGoing = !ship.recalled && this.isRouteValid(ship.target);
+        const keepGoing =
+          ship.owner === 'player' &&
+          ship.purpose === 'trade' &&
+          !ship.recalled &&
+          this.isRouteValid(ship.target);
         if (keepGoing && ship.target) {
-          this.beginOutboundLeg(ship, ship.target);
+          this.beginOutboundLeg(ship, ship.target, 'trade');
+        } else if (ship.owner === 'rival') {
+          finished.push(ship); // rival ships despawn once home
         } else {
           ship.state = 'docked';
           ship.progress = 0;
           ship.target = null;
+          ship.purpose = 'trade';
           ship.recalled = false;
+          const home = this.homeOf(ship);
           const harbor = shorePoint(home.x, home.y, home.radius, WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
           ship.x = harbor.x;
           ship.y = harbor.y;
         }
       }
+    }
+    if (finished.length) {
+      this.ships = this.ships.filter((s) => !finished.includes(s));
     }
   }
 
@@ -370,86 +471,129 @@ export class GameState {
     if (!target) return;
     const def = SHIP_CLASSES[ship.shipClass];
 
-    if (target.kind === 'island') {
-      const island = this.islands.find((i) => i.id === target.id);
-      if (!island) return;
-      if (island.owner === 'rival') {
-        this.showToast('A rival claimed that isle — route abandoned');
-        ship.recalled = true;
-        return;
-      }
-      if (island.owner === 'neutral') {
-        island.allianceProgress += def.alliancePower;
-        if (island.allianceProgress >= island.allianceNeeded) {
-          island.owner = 'player';
-          this.showToast(
-            island.isFurIsland
-              ? 'Fur island allied — the pelt trade is yours!'
-              : `Alliance formed with a ${island.size} isle!`
-          );
-        } else {
-          this.showToast('Goodwill delivered — alliance growing');
-        }
-      } else {
-        // Already allied — the route keeps running, ferrying home whatever
-        // stockpile the isle built up while it was still wild.
-        const haul = Math.min(island.stock, def.alliancePower * 14);
-        if (haul > 0) {
-          island.stock -= haul;
-          this.resources.wood += haul * 0.5;
-          this.resources.stone += haul * 0.5;
-          this.showToast(`Trade route delivered ${Math.round(haul)} goods`);
-        }
-      }
-    } else {
-      const source = this.fishSources.find((f) => f.id === target.id);
+    if (target.kind === 'fish') {
+      const source = this.getFish(target.id);
       if (!source) return;
-      const haul = Math.min(def.fishCargo, source.amount);
+      const haul = Math.min(def.cargo, source.amount);
       source.amount -= haul;
-      ship.cargoFish = haul;
-      this.showToast(`Netted ${Math.round(haul)} fish`);
+      ship.cargo = haul;
+      ship.cargoResource = 'fish';
+      if (ship.owner === 'player') this.showToast(`Netted ${Math.round(haul)} fish`);
+      return;
     }
+
+    const island = this.getIsland(target.id);
+    if (!island) return;
+
+    if (ship.purpose === 'colonize') {
+      if (ship.owner === 'player') this.resolvePlayerColonize(island);
+      else this.resolveRivalColonize(ship, island);
+      return;
+    }
+
+    // Trade route: haul home the island's stockpiled resource.
+    if (island.owner === 'rival' || island.owner === 'player') {
+      ship.recalled = true;
+      if (ship.owner === 'player') this.showToast('That isle changed hands — route abandoned.');
+      return;
+    }
+    const haul = Math.min(def.cargo, island.stock);
+    island.stock -= haul;
+    ship.cargo = haul;
+    ship.cargoResource = island.resource;
+    if (ship.owner === 'player' && haul > 0) {
+      this.showToast(`Hauled ${Math.round(haul)} ${island.resource}`);
+    }
+  }
+
+  private resolvePlayerColonize(island: Island) {
+    if (!island.colonizable || island.owner !== 'neutral') {
+      this.showToast('Could not colonise — the isle is no longer free.');
+      return;
+    }
+    if (this.resources.coins < island.colonizeCost) {
+      this.showToast('Not enough coins to plant the colony.');
+      return;
+    }
+    this.resources.coins -= island.colonizeCost;
+    island.owner = 'player';
+    this.showToast(`Colony founded on the ${island.size} isle!`);
+  }
+
+  private resolveRivalColonize(ship: Ship, island: Island) {
+    const rival = this.rivals.find((r) => r.id === ship.rivalId);
+    if (!rival) return;
+    if (!island.colonizable || island.owner !== 'neutral' || rival.coins < island.colonizeCost) return;
+    rival.coins -= island.colonizeCost;
+    island.owner = 'rival';
+    island.rivalId = rival.id;
   }
 
   private updateRivals(dt: number) {
     for (const rival of this.rivals) {
-      rival.influenceTimer -= dt;
-      if (rival.influenceTimer > 0) continue;
-      rival.influenceTimer = rival.influenceInterval;
+      rival.coins += 3 * dt;
+      rival.launchTimer -= dt;
+      if (rival.launchTimer > 0) continue;
+      rival.launchTimer = rival.launchInterval;
 
-      const home = this.islands.find((i) => i.id === rival.homeIslandId);
+      const home = this.getIsland(rival.homeIslandId);
       if (!home) continue;
-      const candidates = this.islands.filter((i) => i.owner === 'neutral');
+      // Don't dispatch toward an isle a rival ship is already colonising.
+      const claimed = new Set(
+        this.ships
+          .filter((s) => s.owner === 'rival' && s.purpose === 'colonize' && s.target?.kind === 'island')
+          .map((s) => s.target!.id)
+      );
+      const candidates = this.islands.filter(
+        (i) => i.owner === 'neutral' && i.colonizable && !claimed.has(i.id) && rival.coins >= i.colonizeCost
+      );
       if (candidates.length === 0) continue;
       candidates.sort(
         (a, b) => Math.hypot(a.x - home.x, a.y - home.y) - Math.hypot(b.x - home.x, b.y - home.y)
       );
       const target = candidates[0];
-      const progressArr = this.rivalProgress.get(target.id) ?? [0, 0];
-      progressArr[rival.id] = (progressArr[rival.id] ?? 0) + 1;
-      this.rivalProgress.set(target.id, progressArr);
-      if (progressArr[rival.id] >= target.allianceNeeded) {
-        target.owner = 'rival';
-        target.rivalId = rival.id;
-      }
+      const harbor = shorePoint(home.x, home.y, home.radius, target.x, target.y);
+      const ship: Ship = {
+        id: this.nextShipId++,
+        owner: 'rival',
+        rivalId: rival.id,
+        shipClass: 'galleon',
+        state: 'outbound',
+        purpose: 'colonize',
+        x: harbor.x,
+        y: harbor.y,
+        fromX: harbor.x,
+        fromY: harbor.y,
+        toX: harbor.x,
+        toY: harbor.y,
+        progress: 0,
+        heading: 0,
+        target: { kind: 'island', id: target.id },
+        cargo: 0,
+        cargoResource: null,
+        buildTimeLeft: 0,
+        recalled: false,
+      };
+      this.ships.push(ship);
+      this.beginOutboundLeg(ship, { kind: 'island', id: target.id }, 'colonize');
+    }
+  }
+
+  // Wild islands and shoals refill their producers up to the cap, then stop.
+  // Drawing them down (by harvesting) lets them regenerate again.
+  private updateNeutralStock(dt: number) {
+    for (const island of this.islands) {
+      if (island.owner !== 'neutral' || island.producers.length === 0) continue;
+      if (island.stock >= island.stockCap) continue;
+      const rate = island.producers.reduce((sum, p) => sum + p.ratePerSec, 0);
+      island.stock = Math.min(island.stockCap, island.stock + rate * dt);
     }
   }
 
   private updateFishSources(dt: number) {
     for (const source of this.fishSources) {
       if (source.amount < source.capacity) {
-        source.amount = Math.min(source.capacity, source.amount + 2.5 * dt);
-      }
-    }
-  }
-
-  // Uninhabited (neutral-owned) islands quietly stockpile goods on their
-  // own, capped at 150 — capture them (or run a standing trade route there)
-  // to bring that stockpile home.
-  private updateIslandStock(dt: number) {
-    for (const island of this.islands) {
-      if (island.owner === 'neutral') {
-        island.stock = Math.min(NEUTRAL_STOCK_CAP, island.stock + NEUTRAL_STOCK_RATE * dt);
+        source.amount = Math.min(source.capacity, source.amount + source.ratePerSec * dt);
       }
     }
   }
@@ -494,7 +638,7 @@ export class GameState {
     this.updateShips(dt);
     this.updateRivals(dt);
     this.updateFishSources(dt);
-    this.updateIslandStock(dt);
+    this.updateNeutralStock(dt);
 
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
@@ -504,4 +648,5 @@ export class GameState {
   }
 }
 
+export type { ResourceKey };
 export { WORLD_WIDTH, WORLD_HEIGHT };

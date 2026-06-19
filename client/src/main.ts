@@ -3,7 +3,7 @@ import { GameState, ROUND_SECONDS, SHIP_CLASSES } from './game/state';
 import { WORLD_WIDTH, WORLD_HEIGHT } from './game/mapgen';
 import { render } from './game/render';
 import { levelColor } from './game/palette';
-import type { Island, FishSource, Buildings, ShipClass } from './game/types';
+import type { Island, FishSource, Buildings, ShipClass, ResourceKey } from './game/types';
 import * as api from './api';
 import type { AuthUser, Profile } from './api';
 
@@ -31,6 +31,22 @@ const ctx: AppCtx = {
   submitting: false,
 };
 
+const RES_ICON: Record<ResourceKey, string> = {
+  wood: '🪵',
+  stone: '🪨',
+  fish: '🐟',
+  fur: '🦊',
+  coins: '🪙',
+};
+
+const BUILDING_INFO: Record<keyof Buildings, string> = {
+  fishermen: 'More fish per second',
+  workshop: 'Boosts all home production',
+  market: 'Mints coins to fund colonies',
+  shipyard: 'More ship slots · unlocks bigger hulls',
+  fortress: 'More ship slots · walls around your town',
+};
+
 function fmtTime(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
   const m = Math.floor(s / 60);
@@ -48,10 +64,10 @@ function buildingLabel(key: keyof Buildings): string {
   }[key];
 }
 
-function costText(cost: Partial<Record<'wood' | 'stone' | 'fish' | 'fur' | 'coins', number>>): string {
+function costText(cost: Partial<Record<ResourceKey, number>>): string {
   return Object.entries(cost)
-    .map(([k, v]) => `${Math.ceil(v as number)} ${k}`)
-    .join(', ');
+    .map(([k, v]) => `${Math.ceil(v as number)} ${RES_ICON[k as ResourceKey] ?? k}`)
+    .join(' ');
 }
 
 async function refreshProfile() {
@@ -72,7 +88,7 @@ function renderStart() {
   app.innerHTML = `
     <div class="screen start-screen">
       <h1 class="title">Frostmere Isles</h1>
-      <p class="subtitle">Gather resources, win allies, and chart your fleet across the frozen archipelago — each voyage lasts just three minutes.</p>
+      <p class="subtitle">Gather resources, mint coins, build a fleet, and colonise the archipelago with your galleons before two rival lords claim it — each round lasts three minutes.</p>
       <div class="account-row">
         ${
           ctx.user
@@ -188,7 +204,7 @@ function renderSummary() {
     <div class="screen summary-screen">
       <h2>Voyage Complete</h2>
       <div class="summary-grid">
-        <div><span>Islands Allied</span><strong>${summary.islandsClaimed}</strong></div>
+        <div><span>Islands Colonised</span><strong>${summary.islandsClaimed}</strong></div>
         <div><span>Ships Built</span><strong>${summary.shipsBuilt}</strong></div>
         <div><span>Fur Gathered</span><strong>${summary.furGathered}</strong></div>
         <div><span>Gold Earned</span><strong>${summary.goldEarned}</strong></div>
@@ -241,21 +257,16 @@ async function finishRound() {
   renderApp();
 }
 
+type MenuTarget = { kind: 'island'; id: number } | { kind: 'fish'; id: number };
+
 function renderPlaying() {
   app.innerHTML = `
     <div class="screen play-screen">
-      <div class="hud-top">
-        <div class="resource" title="Wood — gathered around your town">🪵 <span id="res-wood">0</span></div>
-        <div class="resource" title="Stone — quarried near your town">🪨 <span id="res-stone">0</span></div>
-        <div class="resource" title="Fish — from Fishermen &amp; fishing voyages">🐟 <span id="res-fish">0</span></div>
-        <div class="resource" title="Fur — from the allied fur island">🦊 <span id="res-fur">0</span></div>
-        <div class="resource" title="Coins — traded at the Market">🪙 <span id="res-coins">0</span></div>
-        <div class="timer" id="timer">3:00</div>
-        <button class="btn ghost small" id="quit-btn">Quit</button>
-      </div>
+      <div class="hud-top" id="hud-top"></div>
       <div class="canvas-wrap">
         <canvas id="game-canvas"></canvas>
         <div class="toast" id="toast"></div>
+        <div class="island-menu hidden" id="island-menu"></div>
       </div>
       <div class="hud-bottom">
         <div class="panel build-panel" id="build-panel"></div>
@@ -265,7 +276,7 @@ function renderPlaying() {
           </div>
           <div class="ship-build-row" id="ship-build-row"></div>
           <div class="ship-list" id="ship-list"></div>
-          <p class="hint" id="ship-hint">Select a docked ship, then click a neutral isle or a fish shoal.</p>
+          <p class="hint" id="ship-hint">Click an island to colonise or harvest it. Galleons are needed to colonise.</p>
         </div>
       </div>
     </div>
@@ -278,11 +289,8 @@ function renderPlaying() {
   canvas.height = WORLD_HEIGHT * dpr;
   ctx2d.scale(dpr, dpr);
 
-  document.querySelector('#quit-btn')?.addEventListener('click', () => {
-    ctx.game = null;
-    ctx.screen = 'start';
-    renderApp();
-  });
+  const menuEl = document.querySelector<HTMLDivElement>('#island-menu')!;
+  let menuTarget: MenuTarget | null = null;
 
   let hoveredIslandId: number | null = null;
   let hoveredFishId: number | null = null;
@@ -320,34 +328,142 @@ function renderPlaying() {
     if (!game) return;
     const { x, y } = toWorld(e.clientX, e.clientY);
     const island = islandAt(x, y);
-
-    if (island && island.isHome && island.owner === 'player') {
-      // cycle through docked ships
-      const docked = game.ships.filter((s) => s.state === 'docked');
-      if (docked.length === 0) {
-        updateShipHint('No docked ships — build one first.');
+    if (island) {
+      if (island.isHome && island.owner === 'player') {
+        closeMenu();
         return;
       }
-      const idx = docked.findIndex((s) => s.id === game.selectedShipId);
-      const next = docked[(idx + 1) % docked.length];
-      game.selectShip(next.id);
-      updateShipHint();
-      renderShipList();
-      return;
-    }
-
-    if (game.selectedShipId === null) return;
-
-    if (island && !island.isHome && island.owner !== 'rival') {
-      const ok = game.sendSelectedShip({ kind: 'island', id: island.id });
-      updateShipHint(ok ? 'Trade route established — the ship will keep sailing it.' : 'Could not start that voyage.');
-      renderShipList();
+      openMenu({ kind: 'island', id: island.id });
       return;
     }
     const fish = fishAt(x, y);
     if (fish) {
-      const ok = game.sendSelectedShip({ kind: 'fish', id: fish.id });
-      updateShipHint(ok ? 'Off to fish — it will keep netting hauls.' : 'Could not start that voyage.');
+      openMenu({ kind: 'fish', id: fish.id });
+      return;
+    }
+    closeMenu();
+  });
+
+  function openMenu(target: MenuTarget) {
+    menuTarget = target;
+    menuEl.classList.remove('hidden');
+    renderMenu();
+  }
+
+  function closeMenu() {
+    menuTarget = null;
+    menuEl.classList.add('hidden');
+  }
+
+  function producerList(island: Island): string {
+    if (island.producers.length === 0) return '';
+    const rows = island.producers
+      .map(
+        (p) =>
+          `<li><span>${p.icon} ${p.label}</span><span class="rate">+${p.ratePerSec.toFixed(1)} ${RES_ICON[p.resource]}/s</span></li>`
+      )
+      .join('');
+    return `<ul class="producer-list">${rows}</ul>`;
+  }
+
+  function renderMenu() {
+    const game = ctx.game;
+    if (!game || !menuTarget) return;
+
+    if (menuTarget.kind === 'fish') {
+      const fish = game.getFish(menuTarget.id);
+      if (!fish) {
+        closeMenu();
+        return;
+      }
+      menuEl.innerHTML = `
+        <div class="island-menu-head">
+          <h3>🐟 Fishing Shoal</h3>
+          <button class="menu-close" data-action="close">✕</button>
+        </div>
+        <p class="menu-line">Fish in the water: <strong>${Math.floor(fish.amount)} / ${fish.capacity}</strong></p>
+        <p class="menu-line muted">Refills to the cap, then waits until a boat draws it down.</p>
+        <div class="menu-actions-row">
+          <button class="btn small primary" data-action="harvest-fish">Send fishing boat (8 🐟)</button>
+        </div>
+      `;
+      return;
+    }
+
+    const island = game.getIsland(menuTarget.id);
+    if (!island) {
+      closeMenu();
+      return;
+    }
+
+    const title = island.special
+      ? `⭐ Special ${island.resource[0].toUpperCase()}${island.resource.slice(1)} Isle`
+      : `${island.terrain[0].toUpperCase()}${island.terrain.slice(1)} ${island.size} isle`;
+
+    let ownerLine = 'Unclaimed';
+    if (island.owner === 'player') ownerLine = 'Your colony';
+    else if (island.owner === 'rival') ownerLine = 'Held by a rival lord';
+    else if (island.special) ownerLine = 'Free for all to harvest — never colonised';
+
+    const stockLine =
+      island.owner === 'neutral' && island.stockCap > 0
+        ? `<p class="menu-line">Stockpile: <strong>${Math.floor(island.stock)} / ${island.stockCap} ${RES_ICON[island.resource]}</strong></p>`
+        : '';
+
+    let actions = '';
+    if (island.owner === 'neutral') {
+      if (island.colonizable) {
+        const hasGalleon = game.hasGalleon();
+        const canAfford = game.resources.coins >= island.colonizeCost;
+        const disabled = !hasGalleon || !canAfford ? 'disabled' : '';
+        const note = !hasGalleon
+          ? '<span class="menu-note">Build a Galleon first</span>'
+          : !canAfford
+          ? `<span class="menu-note">Need ${island.colonizeCost} 🪙</span>`
+          : '';
+        actions += `<button class="btn small primary" data-action="colonize" ${disabled}>Colonise (${island.colonizeCost} 🪙)</button>${note}`;
+      }
+      actions += `<button class="btn small ghost" data-action="harvest">Send harvest ship (8 🐟)</button>`;
+    } else if (island.owner === 'player') {
+      actions = '<span class="menu-note">This colony pays into your stores automatically.</span>';
+    } else {
+      actions = '<span class="menu-note">Out-colonise rivals by claiming free isles first.</span>';
+    }
+
+    menuEl.innerHTML = `
+      <div class="island-menu-head">
+        <h3>${title}</h3>
+        <button class="menu-close" data-action="close">✕</button>
+      </div>
+      <p class="menu-line muted">${ownerLine}</p>
+      <p class="menu-sub">Produces</p>
+      ${producerList(island) || '<p class="menu-line muted">Nothing of note.</p>'}
+      ${stockLine}
+      <div class="menu-actions-row">${actions}</div>
+    `;
+  }
+
+  menuEl.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]');
+    const game = ctx.game;
+    if (!btn || !game || !menuTarget) return;
+    const action = btn.dataset.action;
+    if (action === 'close') {
+      closeMenu();
+      return;
+    }
+    if (action === 'colonize' && menuTarget.kind === 'island') {
+      const res = game.colonize(menuTarget.id);
+      updateShipHint(res.message);
+      renderMenu();
+      renderShipList();
+    } else if (action === 'harvest' && menuTarget.kind === 'island') {
+      const res = game.gather({ kind: 'island', id: menuTarget.id });
+      updateShipHint(res.message);
+      renderShipList();
+    } else if (action === 'harvest-fish' && menuTarget.kind === 'fish') {
+      const res = game.gather({ kind: 'fish', id: menuTarget.id });
+      updateShipHint(res.message);
       renderShipList();
     }
   });
@@ -355,15 +471,7 @@ function renderPlaying() {
   function updateShipHint(message?: string | null) {
     const hint = document.querySelector('#ship-hint');
     if (!hint) return;
-    if (message) {
-      hint.textContent = message;
-      return;
-    }
-    const game = ctx.game;
-    hint.textContent =
-      game && game.selectedShipId !== null
-        ? 'Ship selected — click an isle or fish shoal to start a standing trade route.'
-        : 'Click your home isle to pick a ship, then an isle or shoal.';
+    hint.textContent = message ?? 'Click an island to colonise or harvest it. Galleons are needed to colonise.';
   }
 
   const buildPanelEl = document.querySelector<HTMLDivElement>('#build-panel')!;
@@ -378,24 +486,26 @@ function renderPlaying() {
     const game = ctx.game;
     if (!game) return;
     const keys: (keyof Buildings)[] = ['fishermen', 'workshop', 'market', 'shipyard', 'fortress'];
-    buildPanelEl.innerHTML = keys
-      .map((key) => {
-        const level = game.buildings[key];
-        const cost = game.upgradeCost(key);
-        const affordable = cost ? game.canAfford(cost) : false;
-        return `
+    buildPanelEl.innerHTML =
+      '<div class="panel-title">Home Town</div>' +
+      keys
+        .map((key) => {
+          const level = game.buildings[key];
+          const cost = game.upgradeCost(key);
+          const affordable = cost ? game.canAfford(cost) : false;
+          return `
           <div class="build-row">
             <span class="build-name">
               <span class="lvl-swatch" style="background:${levelColor(level)}"></span>
-              ${buildingLabel(key)} <em>Lv ${level}</em>
+              <span class="build-text">${buildingLabel(key)} <em>Lv ${level}</em><small>${BUILDING_INFO[key]}</small></span>
             </span>
             <button class="btn small" data-key="${key}" ${!cost || !affordable ? 'disabled' : ''}>
-              ${cost ? `Upgrade (${costText(cost)})` : 'Maxed'}
+              ${cost ? `${costText(cost)}` : 'Maxed'}
             </button>
           </div>
         `;
-      })
-      .join('');
+        })
+        .join('');
   }
 
   const shipBuildRowEl = document.querySelector<HTMLDivElement>('#ship-build-row')!;
@@ -416,9 +526,10 @@ function renderPlaying() {
         const def = SHIP_CLASSES[key];
         const locked = game.buildings.shipyard < def.requiresShipyard;
         const canBuild = game.canBuildShip(key);
+        const tag = def.canColonize ? ' ⚑' : '';
         const label = locked
           ? `🔒 ${def.name} <em>Shipyard Lv${def.requiresShipyard}</em>`
-          : `${def.name} <em>${costText(def.cost)}</em>`;
+          : `${def.name}${tag} <em>${costText(def.cost)}</em>`;
         return `<button class="ship-build-btn" data-class="${key}" ${canBuild ? '' : 'disabled'}>${label}</button>`;
       })
       .join('');
@@ -431,8 +542,8 @@ function renderPlaying() {
     if (!game) return;
     const selectBtn = target.closest<HTMLButtonElement>('button[data-ship]');
     if (selectBtn) {
-      game.selectShip(Number(selectBtn.dataset.ship));
-      updateShipHint();
+      const id = Number(selectBtn.dataset.ship);
+      game.selectShip(game.selectedShipId === id ? null : id);
       renderShipList();
       return;
     }
@@ -447,14 +558,15 @@ function renderPlaying() {
   function renderShipList() {
     const game = ctx.game;
     if (!game) return;
+    const playerShips = game.playerShips();
     const fleetLabel = document.querySelector('#fleet-label');
-    if (fleetLabel) fleetLabel.textContent = `Fleet ${game.ships.length}/${game.maxShips()}`;
+    if (fleetLabel) fleetLabel.textContent = `Fleet ${playerShips.length}/${game.maxShips()}`;
     renderShipBuildRow();
-    if (game.ships.length === 0) {
+    if (playerShips.length === 0) {
       shipListEl.innerHTML = '<span class="hint">No ships yet — build one above.</span>';
       return;
     }
-    shipListEl.innerHTML = game.ships
+    shipListEl.innerHTML = playerShips
       .map((s) => {
         const name = SHIP_CLASSES[s.shipClass].name;
         if (s.state === 'building') {
@@ -464,13 +576,43 @@ function renderPlaying() {
           const selected = s.id === game.selectedShipId ? ' selected' : '';
           return `<button class="ship-chip${selected}" data-ship="${s.id}">⛵ ${name} · Docked</button>`;
         }
-        const label = s.state === 'outbound' ? 'On route' : 'Returning';
+        const label =
+          s.purpose === 'colonize' ? 'Colonising' : s.state === 'outbound' ? 'On route' : 'Returning';
         const recallTag = s.recalled ? ' (recalling)' : '';
         return `<button class="ship-chip sailing" data-recall="${s.id}">⛵ ${name} · ${label}${recallTag} ↩</button>`;
       })
       .join('');
   }
 
+  function renderHud() {
+    const game = ctx.game;
+    if (!game) return;
+    const prod = game.buildingProductionPerSec();
+    const hud = document.querySelector<HTMLDivElement>('#hud-top');
+    if (!hud) return;
+    const keys: ResourceKey[] = ['wood', 'stone', 'fish', 'fur', 'coins'];
+    const resHtml = keys
+      .map((k) => {
+        const rate = prod[k];
+        const rateTxt = rate > 0.05 ? `<small>+${rate.toFixed(1)}/s</small>` : '';
+        return `<div class="resource">${RES_ICON[k]} <span id="res-${k}">${Math.floor(
+          game.resources[k]
+        )}</span>${rateTxt}</div>`;
+      })
+      .join('');
+    hud.innerHTML = `
+      ${resHtml}
+      <div class="timer" id="timer">${fmtTime(game.timeLeft)}</div>
+      <button class="btn ghost small" id="quit-btn">Quit</button>
+    `;
+    hud.querySelector('#quit-btn')?.addEventListener('click', () => {
+      ctx.game = null;
+      ctx.screen = 'start';
+      renderApp();
+    });
+  }
+
+  renderHud();
   renderBuildPanel();
   renderShipList();
   updateShipHint();
@@ -488,22 +630,18 @@ function renderPlaying() {
     game.tick(dt);
     render(ctx2d, game, now / 1000, hoveredIslandId, hoveredFishId);
 
-    const woodEl = document.querySelector('#res-wood');
-    const stoneEl = document.querySelector('#res-stone');
-    const fishEl = document.querySelector('#res-fish');
-    const furEl = document.querySelector('#res-fur');
-    const coinsEl = document.querySelector('#res-coins');
+    // light per-frame HUD numbers
+    const keys: ResourceKey[] = ['wood', 'stone', 'fish', 'fur', 'coins'];
+    for (const k of keys) {
+      const el = document.querySelector(`#res-${k}`);
+      if (el) el.textContent = Math.floor(game.resources[k]).toString();
+    }
     const timerEl = document.querySelector('#timer');
-    const toastEl = document.querySelector<HTMLDivElement>('#toast');
-    if (woodEl) woodEl.textContent = Math.floor(game.resources.wood).toString();
-    if (stoneEl) stoneEl.textContent = Math.floor(game.resources.stone).toString();
-    if (fishEl) fishEl.textContent = Math.floor(game.resources.fish).toString();
-    if (furEl) furEl.textContent = Math.floor(game.resources.fur).toString();
-    if (coinsEl) coinsEl.textContent = Math.floor(game.resources.coins).toString();
     if (timerEl) {
       timerEl.textContent = fmtTime(game.timeLeft);
       timerEl.classList.toggle('urgent', game.timeLeft <= 20);
     }
+    const toastEl = document.querySelector<HTMLDivElement>('#toast');
     if (toastEl) {
       toastEl.textContent = game.toast?.text ?? '';
       toastEl.classList.toggle('visible', !!game.toast);
@@ -512,8 +650,10 @@ function renderPlaying() {
     hudAccumulator += dt;
     if (hudAccumulator >= 0.25) {
       hudAccumulator = 0;
+      renderHud();
       renderBuildPanel();
       renderShipList();
+      if (menuTarget) renderMenu();
     }
 
     if (game.status === 'ended') {
